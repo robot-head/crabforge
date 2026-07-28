@@ -24,10 +24,12 @@ use std::time::Duration;
 use refinement_types::{Refinement, int};
 use tokio_postgres::{Client, NoTls};
 
+mod auth;
 pub mod migrate;
 mod repos;
 mod users;
 
+pub use auth::{AccessToken, AuthStore, Session};
 pub use repos::{CursorStore, RepoRecord, RepoStore};
 pub use users::{UserRecord, UserStore};
 
@@ -158,6 +160,10 @@ impl Store {
 
     pub fn cursors(&self) -> CursorStore<'_> {
         CursorStore::new(&self.client)
+    }
+
+    pub fn auth(&self) -> AuthStore<'_> {
+        AuthStore::new(&self.client)
     }
 }
 

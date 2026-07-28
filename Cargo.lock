@@ -1772,6 +1772,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
+name = "forge-auth"
+version = "0.1.0"
+dependencies = [
+ "assert2",
+ "base64 0.23.0",
+ "forge-types",
+ "getrandom 0.4.3",
+ "sha2 0.11.0",
+ "thiserror 2.0.19",
+ "time",
+]
+
+[[package]]
 name = "forge-bus"
 version = "0.1.0"
 dependencies = [
@@ -1940,6 +1953,7 @@ name = "forge-store"
 version = "0.1.0"
 dependencies = [
  "assert2",
+ "forge-auth",
  "forge-testkit",
  "forge-types",
  "refinement-types",

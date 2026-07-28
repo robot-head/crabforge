@@ -47,6 +47,7 @@ crabka-telemetry = { git = "https://github.com/robot-head/crabka", branch = "mai
 crabka-broker = { git = "https://github.com/robot-head/crabka", branch = "main" }
 
 # ── forge crates ─────────────────────────────────────────────────────────────
+forge-auth = { path = "crates/forge-auth" }
 forge-bus = { path = "crates/forge-bus" }
 forge-command = { path = "crates/forge-command" }
 forge-events = { path = "crates/forge-events" }

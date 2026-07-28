@@ -29,11 +29,18 @@ pub struct Migration {
 }
 
 /// Every migration, in application order.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "identity",
-    sql: include_str!("../../../migrations/0001_identity.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "identity",
+        sql: include_str!("../../../migrations/0001_identity.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "auth_and_issues",
+        sql: include_str!("../../../migrations/0002_auth_and_issues.sql"),
+    },
+];
 
 const LEDGER_DDL: &str = "CREATE TABLE schema_migrations (
     version    int8 NOT NULL,

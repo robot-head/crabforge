@@ -56,7 +56,7 @@ async fn migrations_apply_to_a_fresh_database() {
     let store = Store::connect(&gres.dsn()).await.unwrap();
 
     let applied = store.migrate().await.expect("migrations must run on gres");
-    check!(applied == vec![1]);
+    check!(applied == vec![1, 2]);
     check!(migrate::is_current(store.client()).await.unwrap());
 }
 
@@ -284,4 +284,130 @@ async fn a_transaction_rolls_back_rows_and_cursor_together() {
             == 0,
         "cursor must not survive either, or the batch would be skipped on replay"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sessions_and_tokens_round_trip_through_gres() {
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let auth = store.auth();
+    let expires = forge_types::now() + time::Duration::days(14);
+
+    auth.create_session("hash-a", "user-1", expires)
+        .await
+        .unwrap();
+    let session = auth
+        .session("hash-a")
+        .await
+        .unwrap()
+        .expect("session should exist");
+    check!(session.user_id == "user-1");
+
+    auth.delete_session("hash-a").await.unwrap();
+    check!(auth.session("hash-a").await.unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_expired_session_reads_as_absent() {
+    // Returning it with a flag would mean every caller has to check, and one
+    // that forgot would be an authentication bypass.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let past = forge_types::now() - time::Duration::hours(1);
+    store
+        .auth()
+        .create_session("stale", "user-1", past)
+        .await
+        .unwrap();
+
+    check!(store.auth().session("stale").await.unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signing_out_everywhere_removes_every_session_for_that_user() {
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let auth = store.auth();
+    let expires = forge_types::now() + time::Duration::days(1);
+    for hash in ["laptop", "phone"] {
+        auth.create_session(hash, "user-1", expires).await.unwrap();
+    }
+    auth.create_session("other-person", "user-2", expires)
+        .await
+        .unwrap();
+
+    check!(auth.delete_sessions_for("user-1").await.unwrap() == 2);
+    check!(auth.session("laptop").await.unwrap().is_none());
+    check!(
+        auth.session("other-person").await.unwrap().is_some(),
+        "other users unaffected"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_token_is_looked_up_by_the_hash_of_the_presented_secret() {
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let secret = forge_auth::mint_token().unwrap();
+    let now = forge_types::now();
+    store
+        .auth()
+        .upsert_token(&forge_store::AccessToken {
+            token_id: "tok-1".into(),
+            user_id: "user-1".into(),
+            name: "laptop".into(),
+            token_hash: forge_auth::digest(&secret),
+            scopes: "repo:write".into(),
+            created_at: now,
+            expires_at: None,
+            revoked_at: None,
+            last_used_at: None,
+        })
+        .await
+        .unwrap();
+
+    let found = store
+        .auth()
+        .token_by_hash(&forge_auth::digest(&secret))
+        .await
+        .unwrap()
+        .expect("token should resolve");
+    check!(found.user_id == "user-1");
+    check!(found.is_usable(now));
+
+    // The secret itself is nowhere in the database.
+    check!(found.token_hash != secret);
+    check!(store.auth().token_by_hash(&secret).await.unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_revoked_token_stops_working_but_stays_listed() {
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let now = forge_types::now();
+    let mut token = forge_store::AccessToken {
+        token_id: "tok-1".into(),
+        user_id: "user-1".into(),
+        name: "ci".into(),
+        token_hash: "h".into(),
+        scopes: "repo:read".into(),
+        created_at: now,
+        expires_at: None,
+        revoked_at: None,
+        last_used_at: None,
+    };
+    store.auth().upsert_token(&token).await.unwrap();
+
+    token.revoked_at = Some(now);
+    store.auth().upsert_token(&token).await.unwrap();
+
+    let found = store.auth().token_by_hash("h").await.unwrap().unwrap();
+    check!(!found.is_usable(now));
+    // Still listed, so the settings page can show that it was revoked.
+    check!(store.auth().tokens_for("user-1").await.unwrap().len() == 1);
 }

@@ -1,25 +1,22 @@
 [package]
-name = "forge-store"
+name = "forge-auth"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "Crabforge read models in gres"
+description = "Credentials, scopes and CSRF protection for Crabforge"
 
 [lints]
 workspace = true
 
 [dependencies]
+base64.workspace = true
 forge-types.workspace = true
-refinement-types.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
-tokio.workspace = true
-tokio-postgres.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 assert2.workspace = true
-forge-auth.workspace = true
-forge-testkit.workspace = true
