@@ -17,16 +17,17 @@
 use std::sync::Arc;
 
 use forge_bus::{Committed, FencedWriter, PendingRecord, TailError, Tailer, WriteError};
-use forge_events::{GitRefEvent, RepoEvent, UserEvent};
+use forge_events::{GitRefEvent, IssueEvent, RepoEvent, UserEvent};
 use forge_types::{
-    InvalidName, Oid, RepoId, RepoName, UserId, Username, Visibility, full_name_lower, topics,
+    CommentId, InvalidName, IssueId, Oid, RepoId, RepoName, UserId, Username, Visibility,
+    full_name_lower, topics,
 };
 use tokio::sync::Mutex;
 
 mod catalog;
 mod refs;
 
-pub use catalog::{Catalog, Claim, repo_key, user_key};
+pub use catalog::{Catalog, Claim, issue_counter_key, repo_key, user_key};
 pub use refs::{RefMap, RefRejection, RefResult, RefUpdate, RefValue, is_valid_ref_name, ref_key};
 
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +40,12 @@ pub enum CommandError {
     InvalidName(#[from] InvalidName),
     #[error("no such user")]
     UnknownUser,
+    #[error("no such issue")]
+    UnknownIssue,
+    #[error("{field} must not be empty")]
+    Empty { field: &'static str },
+    #[error("{field} must be at most {max} characters")]
+    TooLong { field: &'static str, max: usize },
     #[error(transparent)]
     Write(#[from] WriteError),
     #[error("replaying state: {0}")]
@@ -51,6 +58,45 @@ pub struct RegisterUser {
     pub email: String,
     /// Already hashed. The command service never sees a plaintext password.
     pub password_hash: String,
+}
+
+/// Opening an issue.
+pub struct OpenIssue {
+    pub repo: RepoId,
+    pub author: UserId,
+    pub author_name: String,
+    pub title: String,
+    pub body: Option<String>,
+}
+
+/// Commenting on one.
+pub struct CommentOnIssue {
+    pub repo: RepoId,
+    pub issue: IssueId,
+    pub author: UserId,
+    pub author_name: String,
+    pub body: String,
+}
+
+/// Longest issue title accepted.
+pub const MAX_TITLE: usize = 255;
+
+/// Longest body or comment accepted.
+///
+/// Generous, but bounded: an unbounded body is an unbounded record on the log,
+/// and the broker's frame limit is not a friendly place to discover a limit.
+pub const MAX_BODY: usize = 64 * 1024;
+
+/// Trim and bound a piece of user-supplied text.
+fn validated(text: &str, field: &'static str, max: usize) -> Result<String, CommandError> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(CommandError::Empty { field });
+    }
+    if trimmed.chars().count() > max {
+        return Err(CommandError::TooLong { field, max });
+    }
+    Ok(trimmed.to_string())
 }
 
 /// A repository creation request.
@@ -217,6 +263,106 @@ impl CommandService {
         );
         Ok(Outcome {
             id: repo_id,
+            committed,
+        })
+    }
+
+    /// Open an issue.
+    ///
+    /// The issue number comes from a counter held here and written in the same
+    /// transaction as the event. Allocating it anywhere else — a database
+    /// sequence, a count of existing issues — would either need a round trip
+    /// the single writer does not otherwise need, or would reuse a number after
+    /// a deletion.
+    pub async fn open_issue(&self, request: OpenIssue) -> Result<Outcome<IssueId>, CommandError> {
+        let title = validated(&request.title, "title", MAX_TITLE)?;
+        let mut state = self.state.lock().await;
+
+        let number = state.catalog.next_issue_number(request.repo);
+        let issue_id = IssueId::new();
+        let event = IssueEvent::Opened {
+            issue_id,
+            repo_id: request.repo,
+            number,
+            title,
+            body: request.body.filter(|b| !b.trim().is_empty()),
+            author_id: request.author,
+            author_name: request.author_name,
+        };
+
+        let key = issue_counter_key(request.repo);
+        let claim = Claim::IssueCounter { next: number + 1 };
+        let committed = self
+            .writer
+            .transact(vec![
+                PendingRecord::event(&event, Some(request.author))?,
+                PendingRecord::state(topics::META_CATALOG, &key, &claim)?,
+            ])
+            .await?;
+
+        state.catalog.apply(
+            &key,
+            Some(&serde_json::to_vec(&claim).expect("claim encodes")),
+        );
+        Ok(Outcome {
+            id: issue_id,
+            committed,
+        })
+    }
+
+    /// Comment on an issue.
+    pub async fn comment_on_issue(
+        &self,
+        request: CommentOnIssue,
+    ) -> Result<Outcome<CommentId>, CommandError> {
+        let body = validated(&request.body, "comment", MAX_BODY)?;
+        let comment_id = CommentId::new();
+        let event = IssueEvent::Commented {
+            comment_id,
+            issue_id: request.issue,
+            repo_id: request.repo,
+            author_id: request.author,
+            author_name: request.author_name,
+            body,
+        };
+
+        let committed = self
+            .writer
+            .transact(vec![PendingRecord::event(&event, Some(request.author))?])
+            .await?;
+        Ok(Outcome {
+            id: comment_id,
+            committed,
+        })
+    }
+
+    /// Close or reopen an issue.
+    pub async fn set_issue_state(
+        &self,
+        repo: RepoId,
+        issue: IssueId,
+        actor: UserId,
+        open: bool,
+    ) -> Result<Outcome<IssueId>, CommandError> {
+        let event = if open {
+            IssueEvent::Reopened {
+                issue_id: issue,
+                repo_id: repo,
+                actor,
+            }
+        } else {
+            IssueEvent::Closed {
+                issue_id: issue,
+                repo_id: repo,
+                actor,
+            }
+        };
+        let committed = self
+            .writer
+            .transact(vec![PendingRecord::event(&event, Some(actor))?])
+            .await?;
+        Ok(Outcome {
+            id: issue,
             committed,
         })
     }

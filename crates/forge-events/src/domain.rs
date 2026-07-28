@@ -4,7 +4,7 @@
 //! stream, so an event that is wrong is wrong forever — hence the versioning
 //! discipline in [`crate::Envelope`].
 
-use forge_types::{Oid, RepoId, Role, UserId, Visibility};
+use forge_types::{CommentId, IssueId, Oid, RepoId, Role, UserId, Visibility};
 use serde::{Deserialize, Serialize};
 
 use crate::{DomainEvent, topics};
@@ -133,6 +133,74 @@ impl DomainEvent for RepoEvent {
     }
 }
 
+/// Issues and their conversations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum IssueEvent {
+    Opened {
+        issue_id: IssueId,
+        repo_id: RepoId,
+        /// Per repository, allocated by the command service.
+        number: i64,
+        title: String,
+        body: Option<String>,
+        author_id: UserId,
+        author_name: String,
+    },
+    Commented {
+        comment_id: CommentId,
+        issue_id: IssueId,
+        repo_id: RepoId,
+        author_id: UserId,
+        author_name: String,
+        body: String,
+    },
+    TitleChanged {
+        issue_id: IssueId,
+        repo_id: RepoId,
+        title: String,
+    },
+    Closed {
+        issue_id: IssueId,
+        repo_id: RepoId,
+        actor: UserId,
+    },
+    Reopened {
+        issue_id: IssueId,
+        repo_id: RepoId,
+        actor: UserId,
+    },
+}
+
+impl DomainEvent for IssueEvent {
+    fn topic(&self) -> &'static str {
+        topics::EVENTS_ISSUES
+    }
+
+    fn event_type(&self) -> &'static str {
+        match self {
+            Self::Opened { .. } => "issue.opened",
+            Self::Commented { .. } => "issue.commented",
+            Self::TitleChanged { .. } => "issue.title_changed",
+            Self::Closed { .. } => "issue.closed",
+            Self::Reopened { .. } => "issue.reopened",
+        }
+    }
+
+    fn aggregate_id(&self) -> String {
+        // Keyed by repository, not by issue: a repository's issue events must
+        // stay mutually ordered, or a projector could apply a comment before
+        // the issue it belongs to.
+        match self {
+            Self::Opened { repo_id, .. }
+            | Self::Commented { repo_id, .. }
+            | Self::TitleChanged { repo_id, .. }
+            | Self::Closed { repo_id, .. }
+            | Self::Reopened { repo_id, .. } => repo_id.to_string(),
+        }
+    }
+}
+
 /// Reference updates — the forge's global reflog.
 ///
 /// Retained forever, so "what did this branch point at last Tuesday" is always
@@ -204,6 +272,31 @@ mod tests {
         let before = names.len();
         names.dedup();
         check!(names.len() == before);
+    }
+
+    #[test]
+    fn issue_events_are_keyed_by_repository_so_they_stay_ordered() {
+        // A comment applied before the issue it belongs to would be dropped.
+        let repo = RepoId::new();
+        let opened = IssueEvent::Opened {
+            issue_id: IssueId::new(),
+            repo_id: repo,
+            number: 1,
+            title: "t".into(),
+            body: None,
+            author_id: UserId::new(),
+            author_name: "a".into(),
+        };
+        let commented = IssueEvent::Commented {
+            comment_id: CommentId::new(),
+            issue_id: IssueId::new(),
+            repo_id: repo,
+            author_id: UserId::new(),
+            author_name: "a".into(),
+            body: "b".into(),
+        };
+        check!(opened.aggregate_id() == commented.aggregate_id());
+        check!(opened.topic() == topics::EVENTS_ISSUES);
     }
 
     #[test]

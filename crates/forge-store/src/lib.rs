@@ -25,11 +25,13 @@ use refinement_types::{Refinement, int};
 use tokio_postgres::{Client, NoTls};
 
 mod auth;
+mod issues;
 pub mod migrate;
 mod repos;
 mod users;
 
 pub use auth::{AccessToken, AuthStore, Session};
+pub use issues::{CommentRecord, Counters, IssueRecord, IssueStore};
 pub use repos::{CursorStore, RepoRecord, RepoStore};
 pub use users::{UserRecord, UserStore};
 
@@ -164,6 +166,10 @@ impl Store {
 
     pub fn auth(&self) -> AuthStore<'_> {
         AuthStore::new(&self.client)
+    }
+
+    pub fn issues(&self) -> IssueStore<'_> {
+        IssueStore::new(&self.client)
     }
 }
 

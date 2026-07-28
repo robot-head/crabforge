@@ -20,8 +20,20 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Claim {
-    User { user_id: UserId },
-    Repo { repo_id: RepoId },
+    User {
+        user_id: UserId,
+    },
+    Repo {
+        repo_id: RepoId,
+    },
+    /// The next issue number to hand out for a repository.
+    ///
+    /// Kept in the catalog rather than derived by counting issues, so a boot
+    /// costs one compacted read instead of replaying every issue ever opened —
+    /// and so a deleted issue cannot cause a number to be reused.
+    IssueCounter {
+        next: i64,
+    },
 }
 
 /// Record keys. Namespaced so users and repositories cannot collide.
@@ -31,6 +43,11 @@ pub fn user_key(username_lower: &str) -> String {
 
 pub fn repo_key(full_name_lower: &str) -> String {
     format!("repo:{full_name_lower}")
+}
+
+/// Where a repository's issue counter lives.
+pub fn issue_counter_key(repo: RepoId) -> String {
+    format!("issuenum:{repo}")
 }
 
 /// Every name currently claimed.
@@ -79,6 +96,14 @@ impl Catalog {
 
     pub fn is_repo_name_taken(&self, full_name_lower: &str) -> bool {
         self.is_claimed(&repo_key(full_name_lower))
+    }
+
+    /// The next issue number for a repository. Starts at one.
+    pub fn next_issue_number(&self, repo: RepoId) -> i64 {
+        match self.get(&issue_counter_key(repo)) {
+            Some(Claim::IssueCounter { next }) => *next,
+            _ => 1,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -169,6 +194,23 @@ mod tests {
 
         // A repository may legitimately be named after a user.
         check!(!catalog.is_repo_name_taken("octocat"));
+    }
+
+    #[test]
+    fn issue_numbers_start_at_one_and_are_per_repository() {
+        let mut catalog = Catalog::new();
+        let (a, b) = (RepoId::new(), RepoId::new());
+        check!(catalog.next_issue_number(a) == 1);
+
+        catalog.apply(
+            &issue_counter_key(a),
+            Some(&encode(&Claim::IssueCounter { next: 7 })),
+        );
+        check!(catalog.next_issue_number(a) == 7);
+        check!(
+            catalog.next_issue_number(b) == 1,
+            "counters do not leak between repos"
+        );
     }
 
     #[test]

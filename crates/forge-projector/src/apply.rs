@@ -5,8 +5,8 @@
 //! history. Applying an event a second time must leave the same row it left the
 //! first time.
 
-use forge_events::{RepoEvent, UserEvent};
-use forge_store::{Store, StoreError};
+use forge_events::{IssueEvent, RepoEvent, UserEvent};
+use forge_store::{CommentRecord, IssueRecord, Store, StoreError};
 use time::OffsetDateTime;
 
 use crate::{repo_record_defaults, user_record};
@@ -159,4 +159,143 @@ where
     mutate(&mut record);
     record.updated_at = at;
     store.repos().upsert(&record).await
+}
+
+/// Apply an issue event to the read model.
+///
+/// Counters are recomputed rather than incremented: an increment applied twice
+/// during a replay would drift, and a counter that disagrees with the rows it
+/// describes is worse than one that costs an extra query to maintain.
+pub async fn apply_issue_event(
+    store: &Store,
+    event: &IssueEvent,
+    at: OffsetDateTime,
+) -> Result<(), StoreError> {
+    match event {
+        IssueEvent::Opened {
+            issue_id,
+            repo_id,
+            number,
+            title,
+            body,
+            author_id,
+            author_name,
+        } => {
+            store
+                .issues()
+                .upsert(&IssueRecord {
+                    issue_id: issue_id.to_string(),
+                    repo_id: repo_id.to_string(),
+                    number: *number,
+                    title: title.clone(),
+                    body: body.clone(),
+                    author_id: author_id.to_string(),
+                    author_name: author_name.clone(),
+                    state: "open".to_string(),
+                    comment_count: 0,
+                    created_at: at,
+                    updated_at: at,
+                    closed_at: None,
+                })
+                .await?;
+            store
+                .issues()
+                .refresh_counters(&repo_id.to_string())
+                .await?;
+            Ok(())
+        }
+
+        IssueEvent::Commented {
+            comment_id,
+            issue_id,
+            repo_id,
+            author_id,
+            author_name,
+            body,
+        } => {
+            store
+                .issues()
+                .insert_comment(&CommentRecord {
+                    comment_id: comment_id.to_string(),
+                    issue_id: issue_id.to_string(),
+                    repo_id: repo_id.to_string(),
+                    author_id: author_id.to_string(),
+                    author_name: author_name.clone(),
+                    body: body.clone(),
+                    created_at: at,
+                    updated_at: at,
+                })
+                .await?;
+
+            // The count is derived from the comments actually stored, so a
+            // redelivered comment cannot inflate it.
+            if let Some(mut issue) = store.issues().by_id(&issue_id.to_string()).await? {
+                let comments = store
+                    .issues()
+                    .comments(&issue_id.to_string(), forge_store::page_size(100))
+                    .await?;
+                issue.comment_count = comments.len() as i64;
+                issue.updated_at = at;
+                store.issues().upsert(&issue).await?;
+            }
+            Ok(())
+        }
+
+        IssueEvent::TitleChanged {
+            issue_id, title, ..
+        } => {
+            update_issue(store, &issue_id.to_string(), at, |issue| {
+                issue.title = title.clone();
+            })
+            .await
+        }
+
+        IssueEvent::Closed {
+            issue_id, repo_id, ..
+        } => {
+            update_issue(store, &issue_id.to_string(), at, |issue| {
+                issue.state = "closed".to_string();
+                issue.closed_at = Some(at);
+            })
+            .await?;
+            store
+                .issues()
+                .refresh_counters(&repo_id.to_string())
+                .await?;
+            Ok(())
+        }
+
+        IssueEvent::Reopened {
+            issue_id, repo_id, ..
+        } => {
+            update_issue(store, &issue_id.to_string(), at, |issue| {
+                issue.state = "open".to_string();
+                issue.closed_at = None;
+            })
+            .await?;
+            store
+                .issues()
+                .refresh_counters(&repo_id.to_string())
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+async fn update_issue<F>(
+    store: &Store,
+    issue_id: &str,
+    at: OffsetDateTime,
+    mutate: F,
+) -> Result<(), StoreError>
+where
+    F: FnOnce(&mut IssueRecord),
+{
+    let Some(mut issue) = store.issues().by_id(issue_id).await? else {
+        tracing::warn!(issue_id, "event for an unknown issue; skipping");
+        return Ok(());
+    };
+    mutate(&mut issue);
+    issue.updated_at = at;
+    store.issues().upsert(&issue).await
 }
