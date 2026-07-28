@@ -28,8 +28,24 @@ Early. See [docs/PLAN.md](docs/PLAN.md) for the architecture and milestone plan.
 | Milestone | State |
 |---|---|
 | M0 workspace, topic taxonomy, dev loop, in-process broker tests | done |
-| M1 event spine (fenced writer, projector, read-your-writes) | next |
-| M2–M7 git, browsing, issues, PRs, webhooks, CI, observability | planned |
+| M1 event spine — fenced writer, projector, JSON API, read-your-writes | done |
+| M2 git read path (object topics, disposable cache, clone) | next |
+| M3–M7 push, browsing, issues, PRs, webhooks, CI, observability | planned |
+
+Working today: register a user, create a repository, read both back — with the
+log as the only source of truth and gres as a rebuildable projection of it.
+
+```bash
+curl -X POST localhost:7000/api/v1/users \
+  -H 'content-type: application/json' \
+  -d '{"username":"octocat","email":"octocat@example.com","password":"..."}'
+
+curl -X POST localhost:7000/api/v1/repos \
+  -H 'content-type: application/json' \
+  -d '{"owner":"octocat","name":"Hello-World"}'
+
+curl localhost:7000/api/v1/repos/octocat/Hello-World
+```
 
 ## Getting started
 
