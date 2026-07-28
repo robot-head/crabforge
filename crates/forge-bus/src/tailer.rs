@@ -24,8 +24,8 @@
 use std::net::{SocketAddr, ToSocketAddrs as _};
 
 use crabka_client_core::{
-    Client, ClientError, Connection, ConnectionOptions, FetchPartitionResult, FetchedRecord,
-    IsolatedFetch, fetch_partition_with_isolation_progress,
+    Client, ClientError, Connection, ConnectionOptions, FetchPartitionResult, IsolatedFetch,
+    fetch_partition_with_isolation_progress,
 };
 use crabka_protocol::primitives::uuid::Uuid as WireUuid;
 use tokio::sync::watch;
@@ -47,6 +47,9 @@ pub enum TailError {
     #[error("bootstrap address '{0}' did not resolve")]
     BadBootstrap(String),
 }
+
+/// One record as read from the log.
+pub type FetchedRecord = crabka_client_core::FetchedRecord;
 
 /// A batch of records plus the cursor to resume from.
 #[derive(Debug, Clone)]

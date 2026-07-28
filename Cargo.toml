@@ -33,7 +33,9 @@ crabka-broker = { git = "https://github.com/robot-head/crabka", branch = "main" 
 
 # ── forge crates ─────────────────────────────────────────────────────────────
 forge-bus = { path = "crates/forge-bus" }
+forge-command = { path = "crates/forge-command" }
 forge-events = { path = "crates/forge-events" }
+forge-projector = { path = "crates/forge-projector" }
 forge-store = { path = "crates/forge-store" }
 forge-testkit = { path = "crates/forge-testkit" }
 forge-topics = { path = "crates/forge-topics" }
@@ -41,6 +43,7 @@ forge-types = { path = "crates/forge-types" }
 
 # ── third party (versions aligned with crabka's workspace where shared) ───────
 anyhow = "1"
+argon2 = "0.5"
 assert2 = "0.4"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
 base64 = "0.23"

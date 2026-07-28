@@ -9,7 +9,7 @@
 mod tailer;
 mod writer;
 
-pub use tailer::{Batch, TailError, Tailer};
+pub use tailer::{Batch, FetchedRecord, TailError, Tailer};
 pub use writer::{
     COMMAND_TRANSACTIONAL_ID, Committed, FencedWriter, IndeterminateHandler, PendingRecord,
     WriteError,

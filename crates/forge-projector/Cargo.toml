@@ -1,0 +1,26 @@
+[package]
+name = "forge-projector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Projects Crabforge events into gres read models"
+
+[lints]
+workspace = true
+
+[dependencies]
+forge-bus.workspace = true
+forge-events.workspace = true
+forge-store.workspace = true
+forge-types.workspace = true
+time.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+assert2.workspace = true
+forge-command.workspace = true
+forge-testkit.workspace = true

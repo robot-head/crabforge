@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
+pub mod api;
 pub mod health;
+pub mod password;
 pub mod state;
 
 pub use state::AppState;
@@ -12,5 +14,6 @@ pub use state::AppState;
 pub fn router(state: Arc<AppState>) -> axum::Router {
     axum::Router::new()
         .merge(health::router())
+        .merge(api::router())
         .with_state(state)
 }

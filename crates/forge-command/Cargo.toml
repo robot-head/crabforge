@@ -1,0 +1,25 @@
+[package]
+name = "forge-command"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "The Crabforge command service: the only writer of domain events"
+
+[lints]
+workspace = true
+
+[dependencies]
+forge-bus.workspace = true
+forge-events.workspace = true
+forge-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+assert2.workspace = true
+forge-testkit.workspace = true
