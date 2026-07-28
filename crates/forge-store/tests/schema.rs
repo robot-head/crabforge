@@ -144,6 +144,25 @@ async fn repos_resolve_by_their_pre_lowered_full_name() {
     check!(found.as_ref() == Some(&repo));
 }
 
+#[test]
+fn a_page_size_cannot_carry_a_value_that_would_be_unsafe_in_sql() {
+    // gres cannot bind a parameter in LIMIT, so the count is interpolated into
+    // the statement text. The guarantee that this is safe is the type: every
+    // value a `PageSize` can hold renders as a small positive integer.
+    for candidate in [i64::MIN, -1, 0, forge_store::MAX_PAGE_SIZE + 1, i64::MAX] {
+        check!(
+            forge_store::PageSize::refine(candidate).is_err(),
+            "{candidate} should not be constructible"
+        );
+    }
+    for candidate in 1..=forge_store::MAX_PAGE_SIZE {
+        let rendered = forge_store::PageSize::refine(candidate)
+            .unwrap()
+            .to_string();
+        check!(rendered.chars().all(|c| c.is_ascii_digit()));
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn repo_listing_is_keyset_paginated_newest_first() {
     let Some((_gres, store)) = migrated_store().await else {
@@ -161,7 +180,7 @@ async fn repo_listing_is_keyset_paginated_newest_first() {
 
     let first = store
         .repos()
-        .for_owner(&owner.user_id, None, 2)
+        .for_owner(&owner.user_id, None, forge_store::page_size(2))
         .await
         .unwrap();
     check!(first.len() == 2);
@@ -171,7 +190,11 @@ async fn repo_listing_is_keyset_paginated_newest_first() {
 
     let next = store
         .repos()
-        .for_owner(&owner.user_id, Some(&first[1].repo_id), 2)
+        .for_owner(
+            &owner.user_id,
+            Some(&first[1].repo_id),
+            forge_store::page_size(2),
+        )
         .await
         .unwrap();
     check!(next.len() == 2);
@@ -196,7 +219,7 @@ async fn deleted_repos_are_hidden_from_listings() {
 
     let listed = store
         .repos()
-        .for_owner(&owner.user_id, None, 10)
+        .for_owner(&owner.user_id, None, forge_store::page_size(10))
         .await
         .unwrap();
     check!(listed.is_empty());

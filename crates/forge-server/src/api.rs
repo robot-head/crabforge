@@ -326,7 +326,7 @@ async fn list_user_repos(
 
     let repos = store
         .repos()
-        .for_owner(&user.user_id, None, 30)
+        .for_owner(&user.user_id, None, forge_store::page_size(30))
         .await
         .map_err(ApiError::internal)?;
 

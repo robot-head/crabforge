@@ -11,10 +11,27 @@
 //! type and conversions are exact integer arithmetic. Construction always names
 //! a unit; there is no `ByteSize(4)` to misread.
 
+use refinement_types::{Refinement, int::u64::NonZero};
 use uom::si::{
     information::{byte, gibibyte, kibibyte, mebibyte},
     u64::Information,
 };
+
+/// A chunk size, which cannot be zero.
+///
+/// The predicate is part of the type, so [`chunk_count`] cannot be handed a
+/// zero to divide by — not by convention, but because no such value can be
+/// constructed. Compare the alternative: a `chunk: u64` parameter with a
+/// comment asking callers not to pass zero.
+pub type ChunkSize = Refinement<u64, NonZero>;
+
+/// Build a [`ChunkSize`], panicking on zero.
+///
+/// For constants known at authoring time. Anything derived from input should
+/// use `ChunkSize::refine` and handle the error.
+pub fn chunk_size(bytes: u64) -> ChunkSize {
+    ChunkSize::refine(bytes).expect("chunk size must be positive")
+}
 
 /// A quantity of bytes.
 ///
@@ -67,8 +84,7 @@ impl ByteSize {
     /// A zero-length object still occupies one chunk: git objects are
     /// content-addressed, and an empty blob is a real object with a real id.
     pub fn chunks_of(self, chunk: ByteSize) -> u64 {
-        assert!(chunk.0 > 0, "chunk size must be positive");
-        chunk_count(self.0, chunk.0)
+        chunk_count(self.0, chunk_size(chunk.0))
     }
 
     pub fn human(self) -> String {
@@ -90,15 +106,15 @@ impl ByteSize {
 
 /// Number of `chunk`-sized pieces needed to hold `total` bytes.
 ///
-/// Split out as plain integer arithmetic so Flux can verify the bounds that the
-/// chunked-object codec relies on: every object yields at least one chunk, and
-/// no chunk index ever reaches the count.
-#[flux_rs::spec(fn(total: u64, chunk: u64{chunk > 0}) -> u64{n: n >= 1})]
-pub fn chunk_count(total: u64, chunk: u64) -> u64 {
+/// Always at least one: a zero-length object is still an object, with an id of
+/// its own. Taking a [`ChunkSize`] rather than a bare `u64` moves the "must not
+/// be zero" precondition out of the documentation and into the signature —
+/// there is no zero-valued `ChunkSize` to pass.
+pub fn chunk_count(total: u64, chunk: ChunkSize) -> u64 {
     if total == 0 {
         return 1;
     }
-    total.div_ceil(chunk)
+    total.div_ceil(*chunk)
 }
 
 impl std::ops::Add for ByteSize {
@@ -128,6 +144,11 @@ pub mod limits {
     /// including request framing overhead.
     pub fn max_frame() -> ByteSize {
         ByteSize::mib(100)
+    }
+
+    /// The largest object chunk the forge will produce, as a refined size.
+    pub fn object_chunk_size() -> super::ChunkSize {
+        super::chunk_size(object_chunk().as_bytes())
     }
 
     /// The largest object chunk the forge will produce.
@@ -177,6 +198,13 @@ mod tests {
         check!(chunk.chunks_of(chunk) == 1);
         check!((chunk + ByteSize::bytes(1)).chunks_of(chunk) == 2);
         check!(ByteSize::mib(10).chunks_of(chunk) == 3);
+    }
+
+    #[test]
+    fn a_zero_chunk_size_cannot_be_constructed() {
+        // The precondition `chunk_count` used to state in a comment.
+        check!(ChunkSize::refine(0).is_err());
+        check!(ChunkSize::refine(1).is_ok());
     }
 
     #[test]

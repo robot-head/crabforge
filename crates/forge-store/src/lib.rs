@@ -21,6 +21,7 @@
 
 use std::time::Duration;
 
+use refinement_types::{Refinement, int};
 use tokio_postgres::{Client, NoTls};
 
 pub mod migrate;
@@ -33,15 +34,27 @@ pub use users::{UserRecord, UserStore};
 /// Largest page any listing will return.
 pub const MAX_PAGE_SIZE: i64 = 100;
 
-/// Bound a caller-supplied page size.
+/// A page size known to be within `1..=MAX_PAGE_SIZE`.
 ///
-/// Also the safety argument for interpolating the count into `LIMIT`: gres
-/// cannot bind a parameter there (TODO(gres:parameterized-limit)), so the value
-/// is formatted into the SQL text. Passing it through here guarantees what
-/// reaches the query is an integer in a fixed range — never caller-controlled
-/// text, and never a page large enough to be a denial-of-service lever.
-pub(crate) fn clamp_limit(requested: i64) -> i64 {
-    requested.clamp(1, MAX_PAGE_SIZE)
+/// This one carries real weight. gres cannot bind a parameter in `LIMIT`
+/// (TODO(gres:parameterized-limit)), so the count is formatted into the SQL
+/// text — and a value interpolated into SQL needs a guarantee, not a habit.
+///
+/// Because the query functions take a `PageSize` rather than an `i64`, that
+/// guarantee is the compiler's: the only way to obtain one is [`page_size`],
+/// which clamps, or `PageSize::refine`, which rejects. A future caller cannot
+/// forget to validate, because there is nothing to forget — an unvalidated
+/// integer will not typecheck.
+pub type PageSize = Refinement<i64, int::i64::Closed<1, MAX_PAGE_SIZE>>;
+
+/// Clamp a caller-supplied page size into range.
+///
+/// Out-of-range requests are clamped rather than rejected: a client asking for
+/// 1000 rows wants "as many as you will give me", and an error would be a worse
+/// answer than a full page.
+pub fn page_size(requested: i64) -> PageSize {
+    PageSize::refine(requested.clamp(1, MAX_PAGE_SIZE))
+        .expect("a clamped value is in range by construction")
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -156,23 +169,33 @@ mod tests {
 
     #[test]
     fn page_sizes_are_bounded_in_both_directions() {
-        check!(clamp_limit(25) == 25);
+        check!(*page_size(25) == 25);
         check!(
-            clamp_limit(0) == 1,
+            *page_size(0) == 1,
             "a zero-row page is never what the caller meant"
         );
-        check!(clamp_limit(-5) == 1);
-        check!(clamp_limit(i64::MAX) == MAX_PAGE_SIZE);
+        check!(*page_size(-5) == 1);
+        check!(*page_size(i64::MAX) == MAX_PAGE_SIZE);
     }
 
     #[test]
-    fn clamped_limits_are_always_plain_digits() {
-        // The safety property behind interpolating LIMIT into SQL text.
+    fn an_out_of_range_page_size_cannot_be_constructed_directly() {
+        // The property the type provides: interpolating a `PageSize` into SQL
+        // is safe because no out-of-range value of that type exists.
+        check!(PageSize::refine(0).is_err());
+        check!(PageSize::refine(MAX_PAGE_SIZE + 1).is_err());
+        check!(PageSize::refine(i64::MIN).is_err());
+        check!(PageSize::refine(1).is_ok());
+        check!(PageSize::refine(MAX_PAGE_SIZE).is_ok());
+    }
+
+    #[test]
+    fn every_page_size_renders_as_plain_digits() {
         for requested in [-1, 0, 1, 50, 1_000_000, i64::MIN, i64::MAX] {
-            let rendered = clamp_limit(requested).to_string();
+            let rendered = page_size(requested).to_string();
             check!(
                 rendered.chars().all(|c| c.is_ascii_digit()),
-                "limit rendered as {rendered:?}"
+                "page size rendered as {rendered:?}"
             );
         }
     }

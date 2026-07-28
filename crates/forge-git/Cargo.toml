@@ -7,15 +7,12 @@ authors.workspace = true
 rust-version.workspace = true
 description = "Git object storage on the crabka log, and the disposable cache over it"
 
-[package.metadata.flux]
-enabled = true
-
 [lints]
 workspace = true
 
 [dependencies]
 bytes.workspace = true
-flux-rs.workspace = true
+refinement-types.workspace = true
 forge-bus.workspace = true
 forge-types.workspace = true
 flate2.workspace = true

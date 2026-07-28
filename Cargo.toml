@@ -67,11 +67,10 @@ base64 = "0.23"
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 derive_more = { version = "2", features = ["display", "from", "into", "as_ref", "from_str"] }
-# Refinement types. The attributes are inert under `cargo build` — they are only
-# checked by `cargo flux`, which needs Z3 and Flux's pinned nightly (`just flux`,
-# see docs/verification.md).
-flux-rs = { git = "https://github.com/flux-rs/flux.git" }
 futures = "0.3"
+# Refinement types: a predicate carried in the type and enforced at
+# construction. See docs/verification.md.
+refinement-types = { version = "0.3", default-features = false, features = ["std"] }
 flate2 = "1"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }

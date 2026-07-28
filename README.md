@@ -101,6 +101,7 @@ deleted when the feature lands.
 
 ## Verification
 
-Beyond the compiler, three layers — units in the type system (`uom`), refinement
-types (`flux`), and integration tests against a real broker. See
-[docs/verification.md](docs/verification.md).
+Three layers beyond the compiler: units carried in the type (`uom`), refinement
+types that make out-of-range values unconstructible (`refinement-types`), and
+integration tests against a real broker, a real gres, and the real `git` binary.
+See [docs/verification.md](docs/verification.md).

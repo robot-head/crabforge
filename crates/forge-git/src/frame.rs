@@ -29,7 +29,7 @@
 //! `<key>/c/<i>`. Small objects — the overwhelming majority — are written whole
 //! with no manifest and no extra round trips.
 
-use forge_types::{ByteSize, Oid, limits};
+use forge_types::{ByteSize, ChunkSize, Oid, limits};
 
 const MAGIC: &[u8; 4] = b"FGO1";
 const HEADER_LEN: usize = 4 + 1 + 1 + 8 + 4;
@@ -231,7 +231,7 @@ pub fn encode_object(oid: Oid, kind: Kind, content: &[u8]) -> Encoded {
     }
 
     let chunk_bytes = chunk_size.as_bytes() as usize;
-    let count = chunk_count_for(content.len(), chunk_bytes);
+    let count = chunk_count_for(content.len(), limits::object_chunk_size());
     let mut records = Vec::with_capacity(count as usize + 1);
     records.push((
         object_key(oid),
@@ -245,12 +245,11 @@ pub fn encode_object(oid: Oid, kind: Kind, content: &[u8]) -> Encoded {
 
 /// Number of chunks an object of `len` bytes occupies.
 ///
-/// Only called when `len` exceeds the chunk size, so the result is at least 2 —
-/// stated as a refinement so the manifest can never claim a chunk count the
-/// reassembly loop would treat as "not actually chunked".
-#[flux_rs::spec(fn(len: usize, chunk: usize{chunk > 0 && len > chunk}) -> u32{n: n >= 2})]
-fn chunk_count_for(len: usize, chunk: usize) -> u32 {
-    len.div_ceil(chunk) as u32
+/// Only called when `len` exceeds the chunk size, so the result is at least
+/// two. The chunk size arrives as a [`forge_types::ChunkSize`], which cannot be
+/// zero — so there is no division-by-zero case to guard against here.
+fn chunk_count_for(len: usize, chunk: ChunkSize) -> u32 {
+    len.div_ceil(*chunk as usize) as u32
 }
 
 /// Reassemble a chunked object from its manifest and parts.

@@ -10,12 +10,9 @@ description = "Shared identifier and value types for Crabforge"
 [lints]
 workspace = true
 
-[package.metadata.flux]
-enabled = true
-
 [dependencies]
 derive_more.workspace = true
-flux-rs.workspace = true
+refinement-types.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 time.workspace = true

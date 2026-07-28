@@ -116,13 +116,14 @@ impl<'a> RepoStore<'a> {
         &self,
         owner_id: &str,
         before: Option<&str>,
-        limit: i64,
+        limit: crate::PageSize,
     ) -> Result<Vec<RepoRecord>, StoreError> {
         // gres's parser rejects a bound parameter in LIMIT ("expected LIMIT
-        // count, found Param"), so the count is interpolated. `clamp_limit`
-        // makes that safe: the value is an integer we bound, never caller text.
+        // count, found Param"), so the count is interpolated into the SQL text.
+        // That is safe here because `PageSize` cannot hold a value outside
+        // 1..=MAX_PAGE_SIZE — the type is the argument, not a comment.
         // TODO(gres:parameterized-limit)
-        let limit = crate::clamp_limit(limit);
+        let limit = *limit;
         let rows = match before {
             Some(cursor) => {
                 self.client

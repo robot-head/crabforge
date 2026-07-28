@@ -14,7 +14,7 @@ pub use clock::{now, truncate_to_micros};
 pub use ids::{CommentId, IssueId, JobId, PrId, RepoId, RunId, UserId, WebhookId};
 pub use names::{InvalidName, RepoName, Username, full_name_lower, is_reserved_namespace};
 pub use oid::{InvalidOid, Oid};
-pub use size::{ByteSize, chunk_count, limits};
+pub use size::{ByteSize, ChunkSize, chunk_count, chunk_size, limits};
 
 /// Repository visibility.
 #[derive(

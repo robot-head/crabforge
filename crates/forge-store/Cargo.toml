@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 forge-types.workspace = true
+refinement-types.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true

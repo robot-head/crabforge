@@ -129,14 +129,3 @@ lint:
 fmt:
     cargo fmt --all
 
-# Check refinement types with Flux. Needs Z3 4.15+ and Flux installed from
-# source — see docs/verification.md. The `#[flux_rs::spec]` attributes are inert
-# under a normal build, so this is optional for day-to-day work.
-flux:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if ! command -v cargo-flux >/dev/null 2>&1; then
-      echo "cargo-flux not installed — see docs/verification.md" >&2
-      exit 127
-    fi
-    cargo flux
