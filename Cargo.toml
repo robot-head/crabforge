@@ -53,6 +53,7 @@ forge-events = { path = "crates/forge-events" }
 forge-git = { path = "crates/forge-git" }
 forge-githttp = { path = "crates/forge-githttp" }
 forge-projector = { path = "crates/forge-projector" }
+forge-render = { path = "crates/forge-render" }
 forge-store = { path = "crates/forge-store" }
 forge-testkit = { path = "crates/forge-testkit" }
 forge-topics = { path = "crates/forge-topics" }
@@ -68,15 +69,32 @@ bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 derive_more = { version = "2", features = ["display", "from", "into", "as_ref", "from_str"] }
 futures = "0.3"
+# Entropy. `getrandom` directly rather than `rand`: the auth path needs bytes
+# from the OS and nothing else, and rand's core traits have been renamed twice
+# in recent releases.
+getrandom = "0.4"
 # Refinement types: a predicate carried in the type and enforced at
 # construction. See docs/verification.md.
 refinement-types = { version = "0.3", default-features = false, features = ["std"] }
 flate2 = "1"
 hex = "0.4"
+# ── rendering ────────────────────────────────────────────────────────────────
+# All of these default to oniguruma, a C library. `default-features = false`
+# keeps the build pure Rust.
+comrak = { version = "0.54", default-features = false }
+similar = { version = "3.1", default-features = false, features = ["std", "text", "inline", "unicode"] }
+syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
+# syntect's bundled set has 75 grammars and lacks TypeScript, TOML, Kotlin,
+# Swift, Dockerfile and more. two-face carries 213.
+two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 tempfile = "3"
+# ── templating ───────────────────────────────────────────────────────────────
+askama = "0.16"
+# askama_axum is deprecated; askama_web is its replacement.
+askama_web = { version = "0.16", features = ["axum-0.8", "tracing-0.1"] }
 thiserror = "2"
 time = { version = "0.3", features = ["serde-well-known", "macros", "formatting", "parsing"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal", "fs", "process"] }

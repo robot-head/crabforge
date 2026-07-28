@@ -1,0 +1,22 @@
+[package]
+name = "forge-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Server-side rendering of markdown, source code and diffs for Crabforge"
+
+[lints]
+workspace = true
+
+[dependencies]
+comrak.workspace = true
+forge-types.workspace = true
+similar.workspace = true
+syntect.workspace = true
+tracing.workspace = true
+two-face.workspace = true
+
+[dev-dependencies]
+assert2.workspace = true
