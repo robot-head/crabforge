@@ -42,6 +42,14 @@ struct Args {
     /// it can be a container's ephemeral disk.
     #[arg(long, env = "CRABFORGE_CACHE", default_value = ".dev/git-cache")]
     cache_root: std::path::PathBuf,
+
+    /// Set the `Secure` flag on cookies.
+    ///
+    /// Off by default so the forge works over plain HTTP on a laptop. Turn it
+    /// on anywhere reachable from a network — without it, a session cookie
+    /// travels in the clear.
+    #[arg(long, env = "CRABFORGE_SECURE_COOKIES", default_value_t = false)]
+    secure_cookies: bool,
 }
 
 #[tokio::main]
@@ -106,12 +114,17 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Stylesheets are embedded in the binary and served by the web router, so
+    // a deployment is one file with no asset path to misconfigure.
+    let state = state.with_web(&args.cache_root, args.secure_cookies);
+    let app = router(Arc::new(state));
+
     let listener = tokio::net::TcpListener::bind(&args.listen)
         .await
         .with_context(|| format!("binding {}", args.listen))?;
     tracing::info!(listen = %args.listen, broker = %args.bootstrap, "crabforge-server started");
 
-    axum::serve(listener, router(Arc::new(state)))
+    axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("server error")?;

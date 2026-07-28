@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ status }}{% endblock %}
+{% block content %}
+<div class="error-page">
+  <h1>{{ status }}</h1>
+  <p>{{ message }}</p>
+  <p><a href="/">Back to the forge</a></p>
+</div>
+{% endblock %}

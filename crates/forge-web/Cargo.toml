@@ -1,44 +1,37 @@
 [package]
-name = "forge-server"
+name = "forge-web"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "The Crabforge server"
+description = "The Crabforge web interface"
 
 [lints]
 workspace = true
 
-[[bin]]
-name = "crabforge-server"
-path = "src/main.rs"
-
 [dependencies]
-anyhow.workspace = true
 argon2.workspace = true
-getrandom.workspace = true
+askama.workspace = true
+askama_web.workspace = true
 axum.workspace = true
-clap.workspace = true
-crabka-client-admin.workspace = true
-forge-bus.workspace = true
+forge-auth.workspace = true
 forge-command.workspace = true
 forge-git.workspace = true
-forge-githttp.workspace = true
 forge-render.workspace = true
-forge-web.workspace = true
-forge-projector.workspace = true
 forge-store.workspace = true
 forge-types.workspace = true
-forge-topics.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-tokio.workspace = true
+getrandom.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+time.workspace = true
+tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 
 [dev-dependencies]
 assert2.workspace = true
+forge-projector.workspace = true
 forge-testkit.workspace = true
+forge-topics.workspace = true
+tempfile.workspace = true
 tower.workspace = true

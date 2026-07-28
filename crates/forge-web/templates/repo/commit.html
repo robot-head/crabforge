@@ -1,0 +1,9 @@
+{% extends "layout.html" %}
+{% block repo_content %}
+<div class="commit-header">
+  <h2>{{ summary }}</h2>
+  {% match body %}{% when Some with (b) %}<pre class="commit-body">{{ b }}</pre>{% when None %}{% endmatch %}
+  <p class="meta">{{ author }} committed {{ when }} &middot; <code>{{ oid }}</code></p>
+</div>
+<pre class="diff"><code>{{ diff }}</code></pre>
+{% endblock %}

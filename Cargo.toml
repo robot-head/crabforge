@@ -59,12 +59,13 @@ forge-store = { path = "crates/forge-store" }
 forge-testkit = { path = "crates/forge-testkit" }
 forge-topics = { path = "crates/forge-topics" }
 forge-types = { path = "crates/forge-types" }
+forge-web = { path = "crates/forge-web" }
 
 # ── third party (versions aligned with crabka's workspace where shared) ───────
 anyhow = "1"
 argon2 = "0.5"
 assert2 = "0.4"
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query", "form"] }
 base64 = "0.23"
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }

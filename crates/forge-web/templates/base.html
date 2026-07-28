@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Crabforge{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/syntax-light.css" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" href="/static/syntax-dark.css" media="(prefers-color-scheme: dark)">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">crabforge</a>
+    <nav>
+      {% match viewer %}
+        {% when Some with (v) %}
+          <a href="/{{ v.username }}">{{ v.username }}</a>
+          <a href="/new">New repository</a>
+          <form method="post" action="/logout" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="linkish">Sign out</button>
+          </form>
+        {% when None %}
+          <a href="/login">Sign in</a>
+          <a href="/register">Register</a>
+      {% endmatch %}
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>
+    <span>Every byte of this forge lives in a crabka topic.</span>
+  </footer>
+</body>
+</html>

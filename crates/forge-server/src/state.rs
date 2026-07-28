@@ -26,6 +26,8 @@ pub struct AppState {
     pub applied_offsets: HashMap<String, watch::Receiver<i64>>,
     /// `None` when git hosting is not configured.
     pub git: Option<Arc<forge_githttp::GitState>>,
+    /// `None` when the browser interface is not configured.
+    pub web: Option<Arc<forge_web::WebState>>,
 }
 
 impl AppState {
@@ -37,7 +39,32 @@ impl AppState {
             store: None,
             applied_offsets: HashMap::new(),
             git: None,
+            web: None,
         }
+    }
+
+    /// Serve the browser interface.
+    pub fn with_web(
+        mut self,
+        cache_root: impl Into<std::path::PathBuf>,
+        secure_cookies: bool,
+    ) -> Self {
+        let store = self
+            .store
+            .clone()
+            .expect("the web interface needs the store; call with_store first");
+        self.web = Some(Arc::new(forge_web::WebState {
+            store,
+            commands: self.commands.clone(),
+            bootstrap: self.bootstrap.clone(),
+            cache_root: cache_root.into(),
+            // Minted per process. Restarting invalidates outstanding form
+            // tokens, which is a page refresh rather than a problem.
+            csrf_secret: mint_hook_token().into_bytes(),
+            secure_cookies,
+            applied: self.applied_offsets.clone(),
+        }));
+        self
     }
 
     /// Serve git over HTTP, caching repositories under `cache_root`.

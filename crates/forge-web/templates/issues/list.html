@@ -1,0 +1,21 @@
+{% extends "../repo/layout.html" %}
+{% block repo_content %}
+<div class="toolbar">
+  <a href="/{{ owner }}/{{ repo }}/issues?state=open" {% if showing_open %}class="active"{% endif %}>{{ open_issues }} open</a>
+  <a href="/{{ owner }}/{{ repo }}/issues?state=closed" {% if !showing_open %}class="active"{% endif %}>{{ closed_issues }} closed</a>
+  {% if can_write %}
+    <a class="button" href="/{{ owner }}/{{ repo }}/issues/new">New issue</a>
+  {% endif %}
+</div>
+
+<ul class="issues">
+  {% for i in issues %}
+    <li>
+      <a class="title" href="/{{ owner }}/{{ repo }}/issues/{{ i.number }}">{{ i.title }}</a>
+      <span class="meta">#{{ i.number }} opened by {{ i.author }} &middot; {{ i.comments }} comments</span>
+    </li>
+  {% else %}
+    <li class="empty">Nothing here yet.</li>
+  {% endfor %}
+</ul>
+{% endblock %}

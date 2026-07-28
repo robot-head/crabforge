@@ -1,0 +1,90 @@
+/* Deliberately plain. A forge is read far more than it is admired, so this
+   optimises for legibility and for pages that render before a stylesheet
+   finishes loading. */
+:root {
+  --fg: #1f2328; --muted: #59636e; --bg: #ffffff; --surface: #f6f8fa;
+  --border: #d1d9e0; --accent: #0969da; --open: #1a7f37; --closed: #cf222e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6edf3; --muted: #9198a1; --bg: #0d1117; --surface: #151b23;
+    --border: #3d444d; --accent: #4493f8; --open: #3fb950; --closed: #f85149;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; color: var(--fg); background: var(--bg);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: .75rem 1.5rem; border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.brand { font-weight: 600; font-size: 1.1rem; }
+.topbar nav { display: flex; align-items: center; gap: 1rem; }
+.inline { display: inline; }
+.linkish { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+
+main { max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
+footer { max-width: 60rem; margin: 0 auto; padding: 2rem 1.5rem; color: var(--muted); font-size: 12px; }
+
+.repo-header h1 { font-size: 1.25rem; font-weight: 400; margin: 0 0 .25rem; }
+.description { color: var(--muted); margin: .25rem 0 1rem; }
+.tabs { display: flex; gap: 1.25rem; border-bottom: 1px solid var(--border); padding-bottom: .5rem; margin-bottom: 1rem; }
+.badge { background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 0 .5rem; font-size: 11px; }
+.chip { border: 1px solid var(--border); border-radius: 999px; padding: .1rem .5rem; font-size: 11px; }
+.chip.open { background: var(--open); color: #fff; border-color: transparent; }
+.chip.closed { background: var(--closed); color: #fff; border-color: transparent; }
+
+.toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: .75rem; color: var(--muted); }
+.toolbar .active { font-weight: 600; color: var(--fg); }
+.revision { border: 1px solid var(--border); border-radius: 6px; padding: .1rem .5rem; }
+.clone { margin-left: auto; font-family: ui-monospace, monospace; font-size: 12px; }
+
+table.tree { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 6px; }
+table.tree td { padding: .4rem .75rem; border-top: 1px solid var(--border); }
+table.tree tr:first-child td { border-top: 0; }
+.kind { color: var(--muted); width: 3rem; font-size: 11px; }
+.size { text-align: right; color: var(--muted); width: 6rem; }
+
+.readme { border: 1px solid var(--border); border-radius: 6px; margin-top: 1.5rem; padding: 1.5rem; }
+.readme h2 { margin-top: 0; font-size: .9rem; color: var(--muted); }
+.markdown img { max-width: 100%; }
+.markdown pre { background: var(--surface); padding: 1rem; overflow-x: auto; border-radius: 6px; }
+.markdown table { border-collapse: collapse; }
+.markdown td, .markdown th { border: 1px solid var(--border); padding: .3rem .6rem; }
+
+.blob pre, .diff { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; overflow-x: auto; }
+.blob pre { margin: 0; }
+
+ul.commits, ul.issues, ul.repos { list-style: none; padding: 0; border: 1px solid var(--border); border-radius: 6px; }
+ul.commits li, ul.issues li, ul.repos li { padding: .6rem 1rem; border-top: 1px solid var(--border); }
+ul.commits li:first-child, ul.issues li:first-child, ul.repos li:first-child { border-top: 0; }
+.summary, .title { font-weight: 600; }
+.meta { color: var(--muted); font-size: 12px; display: block; }
+.oid { color: var(--muted); }
+.empty { color: var(--muted); padding: 1.5rem; text-align: center; }
+
+.comment { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 1rem; }
+.comment header { background: var(--surface); padding: .5rem 1rem; border-bottom: 1px solid var(--border); font-weight: 600; }
+.comment .markdown { padding: 1rem; }
+
+form.composer, form.auth { display: flex; flex-direction: column; gap: .75rem; }
+form.auth { max-width: 22rem; margin: 3rem auto; }
+input, textarea, button {
+  font: inherit; padding: .5rem .75rem; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg); color: var(--fg);
+}
+button { background: var(--accent); color: #fff; border-color: transparent; cursor: pointer; }
+button.secondary { background: var(--surface); color: var(--fg); border-color: var(--border); }
+.actions { display: flex; gap: .5rem; }
+.button { background: var(--accent); color: #fff; padding: .35rem .75rem; border-radius: 6px; }
+.button:hover { text-decoration: none; }
+.error { color: var(--closed); }
+.error-page { text-align: center; padding: 4rem 0; }
+.error-page h1 { font-size: 3rem; margin: 0; color: var(--muted); }
+.number { color: var(--muted); font-weight: 400; }

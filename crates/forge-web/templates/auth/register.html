@@ -1,0 +1,14 @@
+{% extends "../base.html" %}
+{% block title %}Register{% endblock %}
+{% block content %}
+<form method="post" action="/register" class="auth">
+  <h1>Create an account</h1>
+  {% match error %}{% when Some with (e) %}<p class="error">{{ e }}</p>{% when None %}{% endmatch %}
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="text" name="username" placeholder="Username" required autofocus autocomplete="username">
+  <input type="email" name="email" placeholder="Email" required autocomplete="email">
+  <input type="password" name="password" placeholder="Password" required minlength="8" autocomplete="new-password">
+  <button type="submit">Register</button>
+  <p>Already have one? <a href="/login">Sign in</a>.</p>
+</form>
+{% endblock %}

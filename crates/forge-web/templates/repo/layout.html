@@ -1,0 +1,16 @@
+{% extends "../base.html" %}
+{% block title %}{{ owner }}/{{ repo }}{% endblock %}
+{% block content %}
+<div class="repo-header">
+  <h1><a href="/{{ owner }}">{{ owner }}</a> / <a href="/{{ owner }}/{{ repo }}">{{ repo }}</a>
+    {% if private %}<span class="chip">Private</span>{% endif %}
+  </h1>
+  {% match description %}{% when Some with (d) %}<p class="description">{{ d }}</p>{% when None %}{% endmatch %}
+  <nav class="tabs">
+    <a href="/{{ owner }}/{{ repo }}">Code</a>
+    <a href="/{{ owner }}/{{ repo }}/issues">Issues <span class="badge">{{ open_issues }}</span></a>
+    <a href="/{{ owner }}/{{ repo }}/commits/{{ default_branch }}">Commits</a>
+  </nav>
+</div>
+{% block repo_content %}{% endblock %}
+{% endblock %}

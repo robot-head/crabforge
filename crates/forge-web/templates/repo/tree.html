@@ -1,0 +1,41 @@
+{% extends "layout.html" %}
+{% block repo_content %}
+<div class="toolbar">
+  <span class="revision">{{ revision }}</span>
+  {% if !path.is_empty() %}
+    <span class="breadcrumb">/ {{ path }}</span>
+  {% endif %}
+  <span class="clone">git clone {{ clone_url }}</span>
+</div>
+
+{% if empty %}
+  <div class="empty">
+    <h2>This repository is empty</h2>
+    <p>Push something to it:</p>
+    <pre><code>git remote add origin {{ clone_url }}
+git push -u origin {{ default_branch }}</code></pre>
+  </div>
+{% else %}
+  <table class="tree">
+    {% if !path.is_empty() %}
+      <tr><td colspan="3"><a href="{{ parent_url }}">..</a></td></tr>
+    {% endif %}
+    {% for entry in entries %}
+      <tr>
+        <td class="kind">{{ entry.icon }}</td>
+        <td><a href="{{ entry.url }}">{{ entry.name }}</a></td>
+        <td class="size">{{ entry.size }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+
+  {% match readme %}
+    {% when Some with (r) %}
+      <article class="readme">
+        <h2>{{ r.name }}</h2>
+        <div class="markdown">{{ r.html }}</div>
+      </article>
+    {% when None %}
+  {% endmatch %}
+{% endif %}
+{% endblock %}

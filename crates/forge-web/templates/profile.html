@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ username }}{% endblock %}
+{% block content %}
+<h1>{{ username }}</h1>
+<ul class="repos">
+  {% for r in repos %}
+    <li>
+      <a href="/{{ username }}/{{ r.name }}">{{ r.name }}</a>
+      {% match r.description %}{% when Some with (d) %}<span class="description">{{ d }}</span>{% when None %}{% endmatch %}
+    </li>
+  {% else %}
+    <li class="empty">No repositories yet.</li>
+  {% endfor %}
+</ul>
+{% endblock %}
