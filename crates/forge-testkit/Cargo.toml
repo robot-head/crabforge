@@ -1,0 +1,28 @@
+[package]
+name = "forge-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "In-process crabka broker and gres fixtures for Crabforge tests"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# `crabka-broker` is a normal dependency *of this crate* because the fixture is
+# its entire purpose. Every other forge crate takes forge-testkit as a
+# dev-dependency only, so no service binary ever links the broker.
+crabka-broker.workspace = true
+crabka-client-admin.workspace = true
+crabka-client-core.workspace = true
+forge-topics.workspace = true
+forge-types.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+assert2.workspace = true

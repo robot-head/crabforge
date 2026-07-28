@@ -1,0 +1,22 @@
+[package]
+name = "forge-topics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Crabforge topic taxonomy and idempotent topic provisioning"
+
+[lints]
+workspace = true
+
+[dependencies]
+crabka-client-admin.workspace = true
+forge-types.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+assert2.workspace = true
+toml.workspace = true

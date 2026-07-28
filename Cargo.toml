@@ -1,0 +1,83 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["The Crabforge Authors"]
+rust-version = "1.97.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.dependencies]
+# ── crabka (co-developed; git deps pinned by the committed Cargo.lock) ────────
+#
+# Crabka and Crabforge move together, so we track `main` rather than a crates.io
+# release. `Cargo.lock` pins the exact rev; bump it deliberately with
+# `cargo update -p crabka-client-core` and review the lockfile diff.
+#
+# For local co-development against an unpublished crabka change, uncomment the
+# `[patch]` block at the bottom of this file and point it at your checkout.
+crabka-client-admin = { git = "https://github.com/robot-head/crabka", branch = "main" }
+crabka-client-consumer = { git = "https://github.com/robot-head/crabka", branch = "main" }
+crabka-client-core = { git = "https://github.com/robot-head/crabka", branch = "main" }
+crabka-client-producer = { git = "https://github.com/robot-head/crabka", branch = "main" }
+crabka-telemetry = { git = "https://github.com/robot-head/crabka", branch = "main" }
+# Dev-dependency only: forge-testkit boots an in-process broker for integration
+# tests. Never a runtime dependency of a forge service.
+crabka-broker = { git = "https://github.com/robot-head/crabka", branch = "main" }
+
+# ── forge crates ─────────────────────────────────────────────────────────────
+forge-bus = { path = "crates/forge-bus" }
+forge-events = { path = "crates/forge-events" }
+forge-store = { path = "crates/forge-store" }
+forge-testkit = { path = "crates/forge-testkit" }
+forge-topics = { path = "crates/forge-topics" }
+forge-types = { path = "crates/forge-types" }
+
+# ── third party (versions aligned with crabka's workspace where shared) ───────
+anyhow = "1"
+assert2 = "0.4"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
+base64 = "0.23"
+bytes = "1"
+clap = { version = "4", features = ["derive", "env"] }
+derive_more = { version = "2", features = ["display", "from", "into", "as_ref", "from_str"] }
+# Refinement types. The attributes are inert under `cargo build` — they are only
+# checked by `cargo flux`, which needs Z3 and Flux's pinned nightly (`just flux`,
+# see docs/verification.md).
+flux-rs = { git = "https://github.com/flux-rs/flux.git" }
+futures = "0.3"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal", "fs", "process"] }
+tokio-postgres = { version = "0.7", features = ["with-uuid-1"] }
+toml = "1.1"
+tower = "0.5"
+tracing = "0.1"
+# Units of measurement: byte quantities carry their unit in the type. Exact
+# integer conversions, so `segment.bytes` and chunk arithmetic cannot drift.
+uom = { version = "0.38", default-features = false, features = ["si", "u64", "std"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+
+# ── Local co-development override ────────────────────────────────────────────
+#
+# Uncomment and adjust the path to build against a sibling crabka checkout.
+# Every crabka crate must be listed — a partial patch produces two copies of
+# the client types in one binary and confusing trait-mismatch errors.
+#
+# [patch.'https://github.com/robot-head/crabka']
+# crabka-client-admin = { path = "../crabka/crates/client-admin" }
+# crabka-client-consumer = { path = "../crabka/crates/client-consumer" }
+# crabka-client-core = { path = "../crabka/crates/client-core" }
+# crabka-client-producer = { path = "../crabka/crates/client-producer" }
+# crabka-telemetry = { path = "../crabka/crates/telemetry" }
+# crabka-broker = { path = "../crabka/crates/broker" }

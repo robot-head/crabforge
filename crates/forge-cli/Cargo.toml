@@ -1,0 +1,28 @@
+[package]
+name = "forge-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Crabforge operator CLI"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "crabforge"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+crabka-client-admin.workspace = true
+forge-topics.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+assert2.workspace = true
+forge-testkit.workspace = true
