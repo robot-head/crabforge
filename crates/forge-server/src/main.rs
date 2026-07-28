@@ -35,6 +35,13 @@ struct Args {
         default_value = "host=127.0.0.1 port=5433 user=forge dbname=crab"
     )]
     dsn: String,
+
+    /// Where per-repository git caches live.
+    ///
+    /// Disposable: every byte under here is rebuilt from the log on demand, so
+    /// it can be a container's ephemeral disk.
+    #[arg(long, env = "CRABFORGE_CACHE", default_value = ".dev/git-cache")]
+    cache_root: std::path::PathBuf,
 }
 
 #[tokio::main]
@@ -63,9 +70,11 @@ async fn main() -> Result<()> {
         .await
         .context("starting the command service")?;
 
+    std::fs::create_dir_all(&args.cache_root).context("creating the git cache directory")?;
     let mut state = AppState::new(&args.bootstrap)
         .with_commands(Arc::clone(&commands))
-        .with_store(Arc::clone(&store));
+        .with_store(Arc::clone(&store))
+        .with_git(&args.cache_root);
 
     // One projector per event topic. Each catches up before the server starts
     // listening, so the first request does not race an empty read model.

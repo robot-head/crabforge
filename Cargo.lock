@@ -1778,6 +1778,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-git"
+version = "0.1.0"
+dependencies = [
+ "assert2",
+ "bytes",
+ "flate2",
+ "flux-rs",
+ "forge-bus",
+ "forge-testkit",
+ "forge-topics",
+ "forge-types",
+ "sha1",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "forge-githttp"
+version = "0.1.0"
+dependencies = [
+ "assert2",
+ "axum",
+ "flate2",
+ "forge-bus",
+ "forge-git",
+ "forge-store",
+ "forge-testkit",
+ "forge-topics",
+ "forge-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "forge-projector"
 version = "0.1.0"
 dependencies = [
@@ -1805,6 +1845,7 @@ dependencies = [
  "clap",
  "crabka-client-admin",
  "forge-command",
+ "forge-githttp",
  "forge-projector",
  "forge-store",
  "forge-testkit",

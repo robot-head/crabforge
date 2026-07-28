@@ -1,0 +1,31 @@
+[package]
+name = "forge-git"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Git object storage on the crabka log, and the disposable cache over it"
+
+[package.metadata.flux]
+enabled = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes.workspace = true
+flux-rs.workspace = true
+forge-bus.workspace = true
+forge-types.workspace = true
+flate2.workspace = true
+sha1 = "0.11"
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+assert2.workspace = true
+forge-testkit.workspace = true
+forge-topics.workspace = true
+tempfile.workspace = true

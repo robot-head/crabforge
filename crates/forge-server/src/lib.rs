@@ -12,8 +12,17 @@ pub use state::AppState;
 
 /// Build the application router.
 pub fn router(state: Arc<AppState>) -> axum::Router {
-    axum::Router::new()
+    let git = state.git.clone();
+    let app = axum::Router::new()
         .merge(health::router())
         .merge(api::router())
-        .with_state(state)
+        .with_state(state);
+
+    // Git endpoints live at the repository's own path (`/{owner}/{repo}`), so
+    // they are merged last: their routes are the broadest in the tree and must
+    // not shadow `/api` or `/healthz`.
+    match git {
+        Some(git) => app.merge(forge_githttp::router().with_state(git)),
+        None => app,
+    }
 }

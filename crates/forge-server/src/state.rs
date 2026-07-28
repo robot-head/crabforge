@@ -24,6 +24,8 @@ pub struct AppState {
     pub store: Option<Arc<Store>>,
     /// Per-topic projection progress, for the read-your-writes gate.
     pub applied_offsets: HashMap<String, watch::Receiver<i64>>,
+    /// `None` when git hosting is not configured.
+    pub git: Option<Arc<forge_githttp::GitState>>,
 }
 
 impl AppState {
@@ -34,7 +36,22 @@ impl AppState {
             commands: None,
             store: None,
             applied_offsets: HashMap::new(),
+            git: None,
         }
+    }
+
+    /// Serve git over HTTP, caching repositories under `cache_root`.
+    pub fn with_git(mut self, cache_root: impl Into<std::path::PathBuf>) -> Self {
+        let store = self
+            .store
+            .clone()
+            .expect("git hosting needs the store; call with_store first");
+        self.git = Some(Arc::new(forge_githttp::GitState {
+            store,
+            bootstrap: self.bootstrap.clone(),
+            cache_root: cache_root.into(),
+        }));
+        self
     }
 
     pub fn with_commands(mut self, commands: Arc<CommandService>) -> Self {

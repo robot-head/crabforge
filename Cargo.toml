@@ -12,6 +12,21 @@ rust-version = "1.97.0"
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
+# Crabka is a ~200-crate dependency tree, and full debug info for all of it
+# costs tens of gigabytes of build output for no benefit — we debug our own
+# code, not the broker's. Line tables keep backtraces useful.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
+
+[profile.test.package."*"]
+debug = false
+
 [workspace.dependencies]
 # ── crabka (co-developed; git deps pinned by the committed Cargo.lock) ────────
 #
@@ -35,6 +50,8 @@ crabka-broker = { git = "https://github.com/robot-head/crabka", branch = "main" 
 forge-bus = { path = "crates/forge-bus" }
 forge-command = { path = "crates/forge-command" }
 forge-events = { path = "crates/forge-events" }
+forge-git = { path = "crates/forge-git" }
+forge-githttp = { path = "crates/forge-githttp" }
 forge-projector = { path = "crates/forge-projector" }
 forge-store = { path = "crates/forge-store" }
 forge-testkit = { path = "crates/forge-testkit" }
@@ -55,6 +72,7 @@ derive_more = { version = "2", features = ["display", "from", "into", "as_ref", 
 # see docs/verification.md).
 flux-rs = { git = "https://github.com/flux-rs/flux.git" }
 futures = "0.3"
+flate2 = "1"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
