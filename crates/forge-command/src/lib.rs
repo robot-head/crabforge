@@ -25,9 +25,11 @@ use forge_types::{
 use tokio::sync::Mutex;
 
 mod catalog;
+mod pulls;
 mod refs;
 
 pub use catalog::{Catalog, Claim, issue_counter_key, repo_key, user_key};
+pub use pulls::{MergeOutcome, MergePull, OpenPull, RecordMergeability, ReviewPull};
 pub use refs::{RefMap, RefRejection, RefResult, RefUpdate, RefValue, is_valid_ref_name, ref_key};
 
 #[derive(Debug, thiserror::Error)]
@@ -46,6 +48,13 @@ pub enum CommandError {
     Empty { field: &'static str },
     #[error("{field} must be at most {max} characters")]
     TooLong { field: &'static str, max: usize },
+    #[error("{0}")]
+    BadRequest(String),
+    #[error("the branch moved while you were reviewing: expected {expected}, found {actual:?}")]
+    StaleMerge {
+        expected: String,
+        actual: Option<String>,
+    },
     #[error(transparent)]
     Write(#[from] WriteError),
     #[error("replaying state: {0}")]

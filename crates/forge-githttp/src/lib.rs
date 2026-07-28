@@ -26,10 +26,12 @@ use axum::{
     routing::{get, post},
 };
 
+mod merge;
 mod pktline;
 pub mod receive;
 mod service;
 
+pub use merge::{Actor, MergeError, Merged, perform as perform_merge, refresh_mergeability};
 pub use receive::{ProposedUpdate, install_hook, parse_hook_input};
 pub use service::{GitError, GitState, ProtocolVersion};
 

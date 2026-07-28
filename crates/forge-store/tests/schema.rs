@@ -56,7 +56,11 @@ async fn migrations_apply_to_a_fresh_database() {
     let store = Store::connect(&gres.dsn()).await.unwrap();
 
     let applied = store.migrate().await.expect("migrations must run on gres");
-    check!(applied == vec![1, 2]);
+    // Every migration the binary carries, whatever that is today — so adding
+    // one does not require editing this test, and forgetting to register one
+    // still fails.
+    let expected: Vec<i64> = migrate::MIGRATIONS.iter().map(|m| m.version).collect();
+    check!(applied == expected);
     check!(migrate::is_current(store.client()).await.unwrap());
 }
 

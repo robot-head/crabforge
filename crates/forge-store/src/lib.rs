@@ -27,11 +27,13 @@ use tokio_postgres::{Client, NoTls};
 mod auth;
 mod issues;
 pub mod migrate;
+mod pulls;
 mod repos;
 mod users;
 
 pub use auth::{AccessToken, AuthStore, Session};
 pub use issues::{CommentRecord, Counters, IssueRecord, IssueStore};
+pub use pulls::{Mergeable, PullRecord, PullStore, ReviewRecord};
 pub use repos::{CursorStore, RepoRecord, RepoStore};
 pub use users::{UserRecord, UserStore};
 
@@ -170,6 +172,10 @@ impl Store {
 
     pub fn issues(&self) -> IssueStore<'_> {
         IssueStore::new(&self.client)
+    }
+
+    pub fn pulls(&self) -> PullStore<'_> {
+        PullStore::new(&self.client)
     }
 }
 

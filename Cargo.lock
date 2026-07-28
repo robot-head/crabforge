@@ -1964,6 +1964,7 @@ dependencies = [
  "forge-bus",
  "forge-command",
  "forge-git",
+ "forge-projector",
  "forge-store",
  "forge-testkit",
  "forge-topics",

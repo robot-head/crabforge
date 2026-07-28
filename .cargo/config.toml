@@ -1,0 +1,6 @@
+# Crabka is a ~200-crate dependency tree and the forge adds syntect, comrak and
+# two-face on top. Incremental compilation caches for that much code cost more
+# disk than they save wall-clock here, and the cache is pure rebuild speed —
+# deleting it is never a correctness problem.
+[build]
+incremental = false

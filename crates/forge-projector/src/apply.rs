@@ -5,8 +5,8 @@
 //! history. Applying an event a second time must leave the same row it left the
 //! first time.
 
-use forge_events::{IssueEvent, RepoEvent, UserEvent};
-use forge_store::{CommentRecord, IssueRecord, Store, StoreError};
+use forge_events::{IssueEvent, PrEvent, RepoEvent, UserEvent};
+use forge_store::{CommentRecord, IssueRecord, PullRecord, ReviewRecord, Store, StoreError};
 use time::OffsetDateTime;
 
 use crate::{repo_record_defaults, user_record};
@@ -298,4 +298,186 @@ where
     mutate(&mut issue);
     issue.updated_at = at;
     store.issues().upsert(&issue).await
+}
+
+/// Apply a pull request event to the read model.
+pub async fn apply_pr_event(
+    store: &Store,
+    event: &PrEvent,
+    at: OffsetDateTime,
+) -> Result<(), StoreError> {
+    match event {
+        PrEvent::Opened {
+            pr_id,
+            repo_id,
+            number,
+            title,
+            body,
+            author_id,
+            author_name,
+            source_branch,
+            target_branch,
+            head_oid,
+            base_oid,
+        } => {
+            store
+                .pulls()
+                .upsert(&PullRecord {
+                    pr_id: pr_id.to_string(),
+                    repo_id: repo_id.to_string(),
+                    number: *number,
+                    title: title.clone(),
+                    body: body.clone(),
+                    author_id: author_id.to_string(),
+                    author_name: author_name.clone(),
+                    state: "open".to_string(),
+                    source_branch: source_branch.clone(),
+                    target_branch: target_branch.clone(),
+                    head_oid: head_oid.to_hex(),
+                    base_oid: base_oid.to_hex(),
+                    // Nothing has tried to merge it yet. The worker will.
+                    mergeable: "unknown".to_string(),
+                    merge_commit_oid: None,
+                    merged_by_name: None,
+                    comment_count: 0,
+                    created_at: at,
+                    updated_at: at,
+                    merged_at: None,
+                    closed_at: None,
+                })
+                .await
+        }
+
+        PrEvent::Synchronized {
+            pr_id,
+            head_oid,
+            base_oid,
+            ..
+        } => {
+            update_pull(store, &pr_id.to_string(), at, |pr| {
+                pr.head_oid = head_oid.to_hex();
+                pr.base_oid = base_oid.to_hex();
+                // The commits moved, so whatever the last trial merge concluded
+                // was about a different pair. Saying "unknown" is honest and
+                // disables the merge button until it is recomputed.
+                pr.mergeable = "unknown".to_string();
+            })
+            .await
+        }
+
+        PrEvent::MergeabilityComputed {
+            pr_id,
+            head_oid,
+            base_oid,
+            mergeable,
+            conflicts,
+            ..
+        } => {
+            let pr_id = pr_id.to_string();
+            let (head, base) = (head_oid.to_hex(), base_oid.to_hex());
+
+            // Only apply if the pull request still points at the commits this
+            // was computed for. A result that arrives after another push is
+            // about history that has moved on.
+            let Some(current) = store.pulls().by_id(&pr_id).await? else {
+                return Ok(());
+            };
+            if current.head_oid != head || current.base_oid != base {
+                tracing::debug!(%pr_id, "discarding a mergeability result for older commits");
+                return Ok(());
+            }
+
+            store
+                .pulls()
+                .set_conflicts(&pr_id, &head, &base, conflicts)
+                .await?;
+            update_pull(store, &pr_id, at, |pr| {
+                pr.mergeable = if *mergeable { "clean" } else { "conflict" }.to_string();
+            })
+            .await
+        }
+
+        PrEvent::Reviewed {
+            review_id,
+            pr_id,
+            repo_id,
+            reviewer_id,
+            reviewer_name,
+            verdict,
+            body,
+        } => {
+            store
+                .pulls()
+                .insert_review(&ReviewRecord {
+                    review_id: review_id.to_string(),
+                    pr_id: pr_id.to_string(),
+                    repo_id: repo_id.to_string(),
+                    reviewer_id: reviewer_id.to_string(),
+                    reviewer_name: reviewer_name.clone(),
+                    verdict: verdict.as_str().to_string(),
+                    body: body.clone(),
+                    created_at: at,
+                })
+                .await
+        }
+
+        PrEvent::Merged {
+            pr_id,
+            merge_commit_oid,
+            merged_by_name,
+            ..
+        } => {
+            update_pull(store, &pr_id.to_string(), at, |pr| {
+                pr.state = "merged".to_string();
+                pr.merge_commit_oid = Some(merge_commit_oid.to_hex());
+                pr.merged_by_name = Some(merged_by_name.clone());
+                pr.merged_at = Some(at);
+                pr.closed_at = Some(at);
+            })
+            .await
+        }
+
+        PrEvent::Closed { pr_id, .. } => {
+            update_pull(store, &pr_id.to_string(), at, |pr| {
+                // A merged pull request stays merged: closing is what happens
+                // to one that was not.
+                if pr.state != "merged" {
+                    pr.state = "closed".to_string();
+                    pr.closed_at = Some(at);
+                }
+            })
+            .await
+        }
+
+        PrEvent::Reopened { pr_id, .. } => {
+            update_pull(store, &pr_id.to_string(), at, |pr| {
+                if pr.state != "merged" {
+                    pr.state = "open".to_string();
+                    pr.closed_at = None;
+                    // Its mergeability was computed before it was closed and
+                    // the base has probably moved since.
+                    pr.mergeable = "unknown".to_string();
+                }
+            })
+            .await
+        }
+    }
+}
+
+async fn update_pull<F>(
+    store: &Store,
+    pr_id: &str,
+    at: OffsetDateTime,
+    mutate: F,
+) -> Result<(), StoreError>
+where
+    F: FnOnce(&mut PullRecord),
+{
+    let Some(mut pr) = store.pulls().by_id(pr_id).await? else {
+        tracing::warn!(pr_id, "event for an unknown pull request; skipping");
+        return Ok(());
+    };
+    mutate(&mut pr);
+    pr.updated_at = at;
+    store.pulls().upsert(&pr).await
 }

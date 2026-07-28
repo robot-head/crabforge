@@ -4,7 +4,7 @@
 //! stream, so an event that is wrong is wrong forever — hence the versioning
 //! discipline in [`crate::Envelope`].
 
-use forge_types::{CommentId, IssueId, Oid, RepoId, Role, UserId, Visibility};
+use forge_types::{CommentId, IssueId, Oid, PrId, RepoId, Role, UserId, Visibility};
 use serde::{Deserialize, Serialize};
 
 use crate::{DomainEvent, topics};
@@ -195,6 +195,132 @@ impl DomainEvent for IssueEvent {
             Self::Opened { repo_id, .. }
             | Self::Commented { repo_id, .. }
             | Self::TitleChanged { repo_id, .. }
+            | Self::Closed { repo_id, .. }
+            | Self::Reopened { repo_id, .. } => repo_id.to_string(),
+        }
+    }
+}
+
+/// Pull requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PrEvent {
+    Opened {
+        pr_id: PrId,
+        repo_id: RepoId,
+        /// Shares the issue sequence, so `#7` is unambiguous.
+        number: i64,
+        title: String,
+        body: Option<String>,
+        author_id: UserId,
+        author_name: String,
+        source_branch: String,
+        target_branch: String,
+        head_oid: Oid,
+        base_oid: Oid,
+    },
+    /// The source branch moved, so the diff and mergeability are both stale.
+    Synchronized {
+        pr_id: PrId,
+        repo_id: RepoId,
+        head_oid: Oid,
+        base_oid: Oid,
+    },
+    /// The result of a trial merge.
+    ///
+    /// An event rather than a cached computation because it is what the merge
+    /// button is enabled from, and because "when did this become conflicted"
+    /// is a question people ask.
+    MergeabilityComputed {
+        pr_id: PrId,
+        repo_id: RepoId,
+        head_oid: Oid,
+        base_oid: Oid,
+        mergeable: bool,
+        conflicts: Vec<String>,
+    },
+    Reviewed {
+        review_id: CommentId,
+        pr_id: PrId,
+        repo_id: RepoId,
+        reviewer_id: UserId,
+        reviewer_name: String,
+        verdict: ReviewVerdict,
+        body: Option<String>,
+    },
+    Merged {
+        pr_id: PrId,
+        repo_id: RepoId,
+        merge_commit_oid: Oid,
+        merged_by: UserId,
+        merged_by_name: String,
+    },
+    Closed {
+        pr_id: PrId,
+        repo_id: RepoId,
+        actor: UserId,
+    },
+    Reopened {
+        pr_id: PrId,
+        repo_id: RepoId,
+        actor: UserId,
+    },
+}
+
+/// What a reviewer decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewVerdict {
+    Approve,
+    RequestChanges,
+    Comment,
+}
+
+impl ReviewVerdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::RequestChanges => "request_changes",
+            Self::Comment => "comment",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "approve" => Some(Self::Approve),
+            "request_changes" => Some(Self::RequestChanges),
+            "comment" => Some(Self::Comment),
+            _ => None,
+        }
+    }
+}
+
+impl DomainEvent for PrEvent {
+    fn topic(&self) -> &'static str {
+        topics::EVENTS_PRS
+    }
+
+    fn event_type(&self) -> &'static str {
+        match self {
+            Self::Opened { .. } => "pr.opened",
+            Self::Synchronized { .. } => "pr.synchronized",
+            Self::MergeabilityComputed { .. } => "pr.mergeability_computed",
+            Self::Reviewed { .. } => "pr.reviewed",
+            Self::Merged { .. } => "pr.merged",
+            Self::Closed { .. } => "pr.closed",
+            Self::Reopened { .. } => "pr.reopened",
+        }
+    }
+
+    fn aggregate_id(&self) -> String {
+        // By repository, so a review cannot be applied before the pull request
+        // it belongs to.
+        match self {
+            Self::Opened { repo_id, .. }
+            | Self::Synchronized { repo_id, .. }
+            | Self::MergeabilityComputed { repo_id, .. }
+            | Self::Reviewed { repo_id, .. }
+            | Self::Merged { repo_id, .. }
             | Self::Closed { repo_id, .. }
             | Self::Reopened { repo_id, .. } => repo_id.to_string(),
         }

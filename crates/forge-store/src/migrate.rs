@@ -40,6 +40,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "auth_and_issues",
         sql: include_str!("../../../migrations/0002_auth_and_issues.sql"),
     },
+    Migration {
+        version: 3,
+        name: "pull_requests",
+        sql: include_str!("../../../migrations/0003_pull_requests.sql"),
+    },
 ];
 
 const LEDGER_DDL: &str = "CREATE TABLE schema_migrations (

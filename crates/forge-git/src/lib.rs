@@ -9,9 +9,11 @@ pub mod cache;
 pub mod frame;
 pub mod import;
 pub mod loose;
+pub mod merge;
 pub mod store;
 
 pub use browse::{Blob, Commit, EntryKind, TreeEntry, is_safe_path, is_safe_revision};
 pub use cache::{Cache, CacheError, Hydrated};
 pub use frame::{Frame, FrameError, Kind, compute_oid, decode, encode_object, object_key, verify};
+pub use merge::MergeAttempt;
 pub use store::{Object, ObjectWriter, StoreError, connect_object_writer};

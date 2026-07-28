@@ -26,6 +26,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 assert2.workspace = true
+forge-projector.workspace = true
 axum.workspace = true
 forge-testkit.workspace = true
 forge-topics.workspace = true
