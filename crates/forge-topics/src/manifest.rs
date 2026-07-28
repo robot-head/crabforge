@@ -15,37 +15,14 @@ use std::collections::BTreeMap;
 use crabka_client_admin::CreateTopicSpec;
 use forge_types::{ByteSize, RepoId};
 
-/// Domain event streams. Named `forge.events.*`, keyed by aggregate id.
-pub const EVENTS_USERS: &str = "forge.events.users";
-pub const EVENTS_REPOS: &str = "forge.events.repos";
-pub const EVENTS_ISSUES: &str = "forge.events.issues";
-pub const EVENTS_PRS: &str = "forge.events.prs";
-pub const EVENTS_GIT_REFS: &str = "forge.events.git-refs";
-pub const EVENTS_CI: &str = "forge.events.ci";
-
-/// Compacted state stores owned by the command service.
-pub const META_CATALOG: &str = "forge.meta.catalog";
-pub const GIT_REFS: &str = "forge.git.refs";
-
-/// Webhook plane.
-pub const WEBHOOKS_CONFIG: &str = "forge.webhooks.config";
-pub const WEBHOOKS_DELIVERIES: &str = "forge.webhooks.deliveries";
-pub const WEBHOOKS_ATTEMPTS: &str = "forge.webhooks.attempts";
-pub const WEBHOOKS_DLQ: &str = "forge.webhooks.dlq";
-
-/// CI plane.
-pub const CI_JOBS: &str = "forge.ci.jobs";
-pub const CI_LOGS: &str = "forge.ci.logs";
-
-/// Every domain event topic, in bootstrap order.
-pub const EVENT_TOPICS: &[&str] = &[
-    EVENTS_USERS,
-    EVENTS_REPOS,
-    EVENTS_ISSUES,
-    EVENTS_PRS,
-    EVENTS_GIT_REFS,
-    EVENTS_CI,
-];
+// Re-exported so callers can name a topic without depending on `forge-types`
+// directly. `EVENTS_*` names are used via `EVENT_TOPICS` below.
+#[allow(unused_imports)]
+pub use forge_types::topics::{
+    CI_JOBS, CI_LOGS, EVENT_TOPICS, EVENTS_CI, EVENTS_GIT_REFS, EVENTS_ISSUES, EVENTS_PRS,
+    EVENTS_REPOS, EVENTS_USERS, GIT_REFS, META_CATALOG, WEBHOOKS_ATTEMPTS, WEBHOOKS_CONFIG,
+    WEBHOOKS_DELIVERIES, WEBHOOKS_DLQ,
+};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
@@ -209,7 +186,7 @@ pub fn static_topics() -> Vec<TopicSpec> {
 /// tombstone sweep. Named by id, so renaming a repository costs nothing.
 pub fn repo_objects_topic(repo: RepoId) -> TopicSpec {
     TopicSpec {
-        name: format!("forge.git.objects.{repo}"),
+        name: forge_types::topics::repo_objects(repo),
         partitions: 1,
         replicas: 1,
         cleanup: Cleanup::Compact,
@@ -328,7 +305,7 @@ mod tests {
     #[test]
     fn repo_object_topics_are_named_by_id_so_renames_are_free() {
         let repo = RepoId::new();
-        check!(repo_objects_topic(repo).name == format!("forge.git.objects.{repo}"));
+        check!(repo_objects_topic(repo).name == forge_types::topics::repo_objects(repo));
     }
 
     #[test]

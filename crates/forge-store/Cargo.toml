@@ -1,27 +1,23 @@
 [package]
-name = "forge-types"
+name = "forge-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "Shared identifier and value types for Crabforge"
+description = "Crabforge read models in gres"
 
 [lints]
 workspace = true
 
-[package.metadata.flux]
-enabled = true
-
 [dependencies]
-derive_more.workspace = true
-flux-rs.workspace = true
-serde.workspace = true
+forge-types.workspace = true
 thiserror.workspace = true
 time.workspace = true
-uom.workspace = true
-uuid.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 assert2.workspace = true
-serde_json.workspace = true
+forge-testkit.workspace = true

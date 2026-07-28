@@ -26,8 +26,44 @@ and it agrees.
 | 6 | **LISTEN/NOTIFY** | No push notification when a projection advances. | The projector publishes an applied-offset `watch` channel in-process; the read-your-writes gate uses that instead. Multi-process deployment will need a different answer. |
 | 7 | **Savepoints** | No partial rollback inside a transaction. | Projector applies are small enough to retry whole. |
 | 8 | **Schemas** | Everything lives in `public`. | Table names carry their own prefixes. |
-| 9 | **Transactional DDL** — unconfirmed | If DDL cannot run inside a transaction, a failed migration leaves a partially-applied schema. | **Open question.** Determine with a probe migration when `forge-store` lands (M1) and record the answer here. |
+| 9 | **Transactional DDL** — unconfirmed | If DDL cannot run inside a transaction, a failed migration leaves a partially-applied schema. | **Open question.** Determine with a probe migration and record the answer here. |
 | 10 | **Window functions, arrays, CHECK constraints** | Minor: counts are maintained as columns, many-to-many uses junction tables, validation lives in Rust. | `repo_counters` table; `issue_labels` junction table. |
+
+## Found by running against gres
+
+Gaps below were discovered by `forge-store`'s test suite executing against a
+real `crabka-gres`, not by reading documentation. Each has a reproducing test.
+
+### Parameterized `LIMIT` is rejected
+
+```
+LIMIT $1  →  ERROR 42601: syntax error: expected LIMIT count, found Param(1)
+```
+
+Every paginated query is affected — which is all of them, since listings are
+keyset paginated. PostgreSQL accepts a bound parameter here and so do all the
+common drivers, so this is a portability break rather than a missing feature.
+
+*Workaround:* the count is interpolated into the SQL text after passing through
+`forge_store::clamp_limit`, which bounds it to 1..=100. Safe because the value
+is an integer the application controls, never caller text — but it means the
+statement text varies with page size, which defeats prepared-statement reuse.
+Tagged `TODO(gres:parameterized-limit)`.
+
+### `CREATE TABLE IF NOT EXISTS`
+
+Not available, so the migration runner attempts the DDL and treats SQLSTATE
+`42P07` (`duplicate_table`) as success. Worth noting that gres *does* return the
+correct SQLSTATE, which is what makes the workaround tolerable — matching on
+message text would have been much worse. Tagged
+`TODO(gres:create-if-not-exists)`.
+
+### Not a gap: microsecond timestamps
+
+`timestamptz` stores microseconds, so nanosecond-precision Rust timestamps do
+not survive a round trip. This is standard PostgreSQL behaviour, not a gres
+limitation — recorded here only because it bit us once. `forge_types::now()`
+truncates at the point of creation so written and read values compare equal.
 
 ## Contributing back
 

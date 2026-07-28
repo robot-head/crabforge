@@ -3,11 +3,14 @@
 //! Every crate in the workspace speaks these types, and this crate depends on
 //! nothing from crabka — it is the bottom of the dependency graph.
 
+mod clock;
 mod ids;
 mod names;
 mod oid;
 mod size;
+pub mod topics;
 
+pub use clock::{now, truncate_to_micros};
 pub use ids::{CommentId, IssueId, JobId, PrId, RepoId, RunId, UserId, WebhookId};
 pub use names::{InvalidName, RepoName, Username, full_name_lower, is_reserved_namespace};
 pub use oid::{InvalidOid, Oid};

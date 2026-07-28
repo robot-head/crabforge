@@ -14,6 +14,10 @@ use crabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use crabka_client_admin::AdminClient;
 use tempfile::TempDir;
 
+mod gres;
+
+pub use gres::{Gres, require_gres, wait_for_port};
+
 /// Install a tracing subscriber once per test binary. Honours `RUST_LOG`.
 pub fn init_tracing() {
     let _ = tracing_subscriber::fmt()
