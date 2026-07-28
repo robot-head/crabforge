@@ -91,6 +91,19 @@ impl Catalog {
 }
 
 #[cfg(test)]
+pub(crate) mod tests_support {
+    use forge_types::Oid;
+
+    /// A deterministic object id, for tests that only need distinct values.
+    pub fn oid(seed: u8) -> Oid {
+        let mut bytes = [0u8; 20];
+        bytes[0] = seed;
+        bytes[19] = seed;
+        Oid::from_bytes(bytes)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use assert2::check;
 

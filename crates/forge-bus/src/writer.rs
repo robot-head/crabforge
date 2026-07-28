@@ -35,6 +35,16 @@ use forge_events::{DomainEvent, Envelope, ce};
 /// per-process id would fence nothing.
 pub const COMMAND_TRANSACTIONAL_ID: &str = "forge.cmd.main";
 
+/// The transactional id for git object writes.
+///
+/// Deliberately *not* [`COMMAND_TRANSACTIONAL_ID`]: two writers sharing an id
+/// fence each other, so reusing it would mean the first object write killed the
+/// command service. They are separate logical writers because objects are
+/// content-addressed and immutable — they need no ordering against domain
+/// events, and a large push should not block command processing while it
+/// uploads.
+pub const OBJECT_TRANSACTIONAL_ID: &str = "forge.objects.main";
+
 #[derive(Debug, thiserror::Error)]
 pub enum WriteError {
     /// Another writer took over. This instance must stop writing; it can no

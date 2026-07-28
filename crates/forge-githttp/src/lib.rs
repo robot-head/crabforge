@@ -27,8 +27,10 @@ use axum::{
 };
 
 mod pktline;
+pub mod receive;
 mod service;
 
+pub use receive::{ProposedUpdate, install_hook, parse_hook_input};
 pub use service::{GitError, GitState, ProtocolVersion};
 
 /// Mount the git endpoints.
@@ -38,8 +40,13 @@ pub use service::{GitError, GitState, ProtocolVersion};
 /// `{repo}.git` is not expressible as a route.
 pub fn router() -> axum::Router<Arc<GitState>> {
     axum::Router::new()
+        // The hook callback is mounted first: it is a fixed path, and the
+        // repository routes below would otherwise capture `/internal/hooks`
+        // as an owner and repository name.
+        .route("/internal/hooks/pre-receive", post(pre_receive_hook))
         .route("/{owner}/{repo}/info/refs", get(info_refs))
         .route("/{owner}/{repo}/git-upload-pack", post(upload_pack))
+        .route("/{owner}/{repo}/git-receive-pack", post(receive_pack))
 }
 
 /// Strip the `.git` suffix clients append to clone URLs.
@@ -68,15 +75,29 @@ async fn info_refs(
     headers: HeaderMap,
 ) -> Result<Response, GitError> {
     let service = query.service.as_deref().unwrap_or_default();
-    if service != "git-upload-pack" {
-        // The dumb protocol is not served, and receive-pack arrives in M3.
-        return Err(GitError::UnsupportedService(service.to_string()));
-    }
+    // The dumb protocol is not served at all: it would expose the cache's
+    // internal layout and cannot express the negotiation a forge needs.
+    let advertise_push = match service {
+        "git-upload-pack" => false,
+        "git-receive-pack" if state.accepts_pushes() => true,
+        other => return Err(GitError::UnsupportedService(other.to_string())),
+    };
 
     let cache = state.prepare(&owner, repo_name(&repo)).await?;
-    let advertisement = service::advertise_refs(&cache, &protocol_version(&headers)).await?;
+    let protocol = protocol_version(&headers);
+    let (advertisement, service_name) = if advertise_push {
+        (
+            service::advertise_receive_refs(&cache).await?,
+            "git-receive-pack",
+        )
+    } else {
+        (
+            service::advertise_refs(&cache, &protocol).await?,
+            "git-upload-pack",
+        )
+    };
 
-    let mut body = pktline::service_header("git-upload-pack");
+    let mut body = pktline::service_header(service_name);
     body.extend_from_slice(&advertisement);
 
     Ok((
@@ -84,13 +105,110 @@ async fn info_refs(
         [
             (
                 header::CONTENT_TYPE,
-                "application/x-git-upload-pack-advertisement",
+                format!("application/x-{service_name}-advertisement"),
             ),
-            (header::CACHE_CONTROL, "no-cache"),
+            (header::CACHE_CONTROL, "no-cache".to_string()),
         ],
         body,
     )
         .into_response())
+}
+
+/// Receive a push.
+///
+/// The forge's decision happens inside git's `pre-receive` hook, which calls
+/// back into [`pre_receive_hook`] below — see `receive.rs` for why.
+async fn receive_pack(
+    State(state): State<Arc<GitState>>,
+    Path((owner, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, GitError> {
+    if !state.accepts_pushes() {
+        return Err(GitError::UnsupportedService("git-receive-pack".into()));
+    }
+    let cache = state.prepare(&owner, repo_name(&repo)).await?;
+
+    let request = if headers
+        .get(header::CONTENT_ENCODING)
+        .is_some_and(|v| v.as_bytes() == b"gzip")
+    {
+        service::gunzip(&body)?
+    } else {
+        body.to_vec()
+    };
+
+    let output = service::receive_pack(&state, &cache, &owner, repo_name(&repo), &request).await?;
+
+    Ok((
+        StatusCode::OK,
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/x-git-receive-pack-result",
+            ),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        Body::from(output),
+    )
+        .into_response())
+}
+
+/// The `pre-receive` hook calling back for a decision.
+///
+/// Loopback-only in practice, and authenticated with a per-process token, so a
+/// hook left behind by an earlier run cannot approve a push against this one.
+async fn pre_receive_hook(
+    State(state): State<Arc<GitState>>,
+    headers: HeaderMap,
+    body: String,
+) -> Result<Response, GitError> {
+    let token = headers
+        .get("x-forge-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    if !state.hook_token_matches(token) {
+        return Err(GitError::Unauthorized);
+    }
+
+    let repo: forge_types::RepoId = headers
+        .get("x-forge-repo")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| GitError::Git("hook callback did not name a repository".into()))?;
+
+    let quarantine = headers
+        .get("x-forge-quarantine")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from);
+
+    let pusher = state.pusher_for(repo).await?;
+    let proposed = receive::parse_hook_input(&body);
+    let repo_path = state.repo_path(repo);
+
+    let results = receive::accept_push(
+        &state,
+        repo,
+        pusher,
+        quarantine.as_deref(),
+        &repo_path,
+        &proposed,
+    )
+    .await?;
+
+    // Report the first rejection back through the hook's stderr, which git
+    // shows the pusher verbatim.
+    let rejections: Vec<String> = results
+        .iter()
+        .filter_map(|r| r.outcome.as_ref().err().map(|e| format!("{}: {e}", r.name)))
+        .collect();
+
+    if rejections.is_empty() {
+        Ok((StatusCode::OK, "ok").into_response())
+    } else {
+        Ok((StatusCode::CONFLICT, rejections.join("\n")).into_response())
+    }
 }
 
 /// The negotiation and packfile transfer.

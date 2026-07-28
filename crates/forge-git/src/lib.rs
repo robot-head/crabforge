@@ -12,4 +12,4 @@ pub mod store;
 
 pub use cache::{Cache, CacheError, Hydrated};
 pub use frame::{Frame, FrameError, Kind, compute_oid, decode, encode_object, object_key, verify};
-pub use store::{Object, ObjectWriter, StoreError};
+pub use store::{Object, ObjectWriter, StoreError, connect_object_writer};

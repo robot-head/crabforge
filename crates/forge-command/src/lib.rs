@@ -17,15 +17,17 @@
 use std::sync::Arc;
 
 use forge_bus::{Committed, FencedWriter, PendingRecord, TailError, Tailer, WriteError};
-use forge_events::{RepoEvent, UserEvent};
+use forge_events::{GitRefEvent, RepoEvent, UserEvent};
 use forge_types::{
-    InvalidName, RepoId, RepoName, UserId, Username, Visibility, full_name_lower, topics,
+    InvalidName, Oid, RepoId, RepoName, UserId, Username, Visibility, full_name_lower, topics,
 };
 use tokio::sync::Mutex;
 
 mod catalog;
+mod refs;
 
 pub use catalog::{Catalog, Claim, repo_key, user_key};
+pub use refs::{RefMap, RefRejection, RefResult, RefUpdate, RefValue, is_valid_ref_name, ref_key};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CommandError {
@@ -71,11 +73,18 @@ pub struct Outcome<T> {
 
 pub struct CommandService {
     writer: FencedWriter,
-    /// Serializes decisions. The catalog is read and written as one step, so a
-    /// concurrent command cannot observe a name as free after another has
-    /// claimed it but before that claim is committed.
-    state: Mutex<Catalog>,
+    /// Serializes decisions. State is read and written as one step, so a
+    /// concurrent command cannot observe a name as free — or a reference as
+    /// unmoved — after another has claimed it but before that claim commits.
+    state: Mutex<State>,
     bootstrap: String,
+}
+
+/// Everything the service decides against.
+#[derive(Debug, Default)]
+struct State {
+    catalog: Catalog,
+    refs: RefMap,
 }
 
 impl CommandService {
@@ -85,21 +94,33 @@ impl CommandService {
 
         let mut catalog = Catalog::new();
         let mut tailer = Tailer::open(bootstrap, topics::META_CATALOG).await?;
-        let replayed = tailer
+        let claims_replayed = tailer
             .replay_to_end(|record| {
                 let key = record.key.as_deref().unwrap_or_default();
                 catalog.apply(&String::from_utf8_lossy(key), record.value.as_deref());
             })
             .await?;
+
+        let mut refs = RefMap::new();
+        let mut ref_tailer = Tailer::open(bootstrap, topics::GIT_REFS).await?;
+        let refs_replayed = ref_tailer
+            .replay_to_end(|record| {
+                let key = record.key.as_deref().unwrap_or_default();
+                refs.apply(&String::from_utf8_lossy(key), record.value.as_deref());
+            })
+            .await?;
+
         tracing::info!(
-            records = replayed,
+            claim_records = claims_replayed,
             claims = catalog.len(),
-            "rebuilt uniqueness catalog from the log"
+            ref_records = refs_replayed,
+            refs = refs.len(),
+            "rebuilt decision state from the log"
         );
 
         Ok(Arc::new(Self {
             writer,
-            state: Mutex::new(catalog),
+            state: Mutex::new(State { catalog, refs }),
             bootstrap: bootstrap.to_string(),
         }))
     }
@@ -119,9 +140,9 @@ impl CommandService {
         request: RegisterUser,
     ) -> Result<Outcome<UserId>, CommandError> {
         let username = Username::parse(request.username)?;
-        let mut catalog = self.state.lock().await;
+        let mut state = self.state.lock().await;
 
-        if catalog.is_username_taken(username.lower()) {
+        if state.catalog.is_username_taken(username.lower()) {
             return Err(CommandError::UsernameTaken);
         }
 
@@ -146,7 +167,7 @@ impl CommandService {
             ])
             .await?;
 
-        catalog.apply(
+        state.catalog.apply(
             &key,
             Some(&serde_json::to_vec(&claim).expect("claim encodes")),
         );
@@ -160,9 +181,9 @@ impl CommandService {
     pub async fn create_repo(&self, request: CreateRepo) -> Result<Outcome<RepoId>, CommandError> {
         let name = RepoName::parse(request.name)?;
         let full_name = full_name_lower(&request.owner_name, &name);
-        let mut catalog = self.state.lock().await;
+        let mut state = self.state.lock().await;
 
-        if catalog.is_repo_name_taken(&full_name) {
+        if state.catalog.is_repo_name_taken(&full_name) {
             return Err(CommandError::RepoExists);
         }
 
@@ -190,7 +211,7 @@ impl CommandService {
             ])
             .await?;
 
-        catalog.apply(
+        state.catalog.apply(
             &key,
             Some(&serde_json::to_vec(&claim).expect("claim encodes")),
         );
@@ -202,6 +223,80 @@ impl CommandService {
 
     /// How many names are currently claimed. For diagnostics.
     pub async fn claim_count(&self) -> usize {
-        self.state.lock().await.len()
+        self.state.lock().await.catalog.len()
+    }
+
+    /// Every reference in a repository, as the log has them.
+    ///
+    /// This is what the git endpoints advertise, so a client negotiates against
+    /// the canonical value rather than whatever a local cache happens to hold.
+    pub async fn refs_for(&self, repo: RepoId) -> Vec<(String, Oid)> {
+        self.state.lock().await.refs.for_repo(repo)
+    }
+
+    /// Move references, atomically and with compare-and-swap on each one.
+    ///
+    /// Either every update applies or none does. Git's own `receive-pack`
+    /// reports per-reference outcomes, so a partial success would be
+    /// expressible on the wire — but the alternative means a push that fails
+    /// half way leaves a repository in a state the pusher never intended, with
+    /// no record of what they meant. Rejecting the whole push keeps the
+    /// remedy simple: fetch, reconcile, push again.
+    pub async fn update_refs(
+        &self,
+        repo: RepoId,
+        updates: Vec<RefUpdate>,
+        pusher: UserId,
+    ) -> Result<Vec<RefResult>, CommandError> {
+        if updates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut state = self.state.lock().await;
+
+        // Check everything first. A rejection anywhere means nothing is written.
+        let mut results = Vec::with_capacity(updates.len());
+        let mut rejected = false;
+        for update in &updates {
+            let outcome = state.refs.check(repo, update);
+            rejected |= outcome.is_err();
+            results.push(RefResult {
+                name: update.name.clone(),
+                outcome,
+            });
+        }
+        if rejected {
+            return Ok(results);
+        }
+
+        // One transaction carries the history and the current-value records, so
+        // the reflog can never disagree with where a branch points.
+        let mut records = Vec::with_capacity(updates.len() * 2);
+        for update in &updates {
+            let event = GitRefEvent::RefUpdated {
+                repo_id: repo,
+                r#ref: update.name.clone(),
+                old: update.expected_old,
+                new: update.new,
+                pusher,
+                // Detecting a non-fast-forward needs the commit graph, which
+                // lives in the object cache rather than here. Recorded as a
+                // known gap: the event carries the field so the value can be
+                // filled in without a schema change.
+                forced: false,
+            };
+            records.push(PendingRecord::event(&event, Some(pusher))?);
+
+            let key = refs::ref_key(repo, &update.name);
+            records.push(match update.new {
+                Some(oid) => PendingRecord::state(topics::GIT_REFS, &key, &RefValue { oid })?,
+                None => PendingRecord::tombstone(topics::GIT_REFS, &key),
+            });
+        }
+        self.writer.transact(records).await?;
+
+        for update in &updates {
+            state.refs.set(repo, &update.name, update.new);
+        }
+        Ok(results)
     }
 }

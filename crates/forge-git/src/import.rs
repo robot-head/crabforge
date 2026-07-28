@@ -28,7 +28,12 @@ use crate::{
 /// (imports and tests). A streaming version becomes necessary when someone
 /// imports something large; the seam is this function's signature.
 pub fn read_all_objects(path: &Path) -> Result<Vec<Object>, CacheError> {
-    let mut child = Command::new("git")
+    read_objects_with_env(path, &[])
+}
+
+fn read_objects_with_env(path: &Path, env: &[(&str, &str)]) -> Result<Vec<Object>, CacheError> {
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(path)
         .args([
@@ -39,8 +44,11 @@ pub fn read_all_objects(path: &Path) -> Result<Vec<Object>, CacheError> {
             "--unordered",
         ])
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let mut child = command.spawn()?;
 
     let stdout = child.stdout.take().expect("piped");
     let mut reader = BufReader::new(stdout);
@@ -91,6 +99,28 @@ pub fn read_all_objects(path: &Path) -> Result<Vec<Object>, CacheError> {
         });
     }
     Ok(objects)
+}
+
+/// Read the objects held in `object_dir`, resolving deltas against `repo`.
+///
+/// Used on a push: git leaves the incoming objects in a quarantine directory,
+/// and the repository is supplied as an alternate so a delta against existing
+/// history can still be inflated — while enumeration covers only what is new.
+pub fn read_objects_in(object_dir: &Path, repo: &Path) -> Result<Vec<Object>, CacheError> {
+    let alternates = repo.join("objects");
+    read_objects_with_env(
+        repo,
+        &[
+            (
+                "GIT_OBJECT_DIRECTORY",
+                object_dir.to_string_lossy().as_ref(),
+            ),
+            (
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                alternates.to_string_lossy().as_ref(),
+            ),
+        ],
+    )
 }
 
 /// Every reference in the repository at `path`.

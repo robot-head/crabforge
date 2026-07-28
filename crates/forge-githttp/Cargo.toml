@@ -13,6 +13,8 @@ workspace = true
 [dependencies]
 axum.workspace = true
 flate2.workspace = true
+forge-bus.workspace = true
+forge-command.workspace = true
 forge-git.workspace = true
 forge-store.workspace = true
 forge-types.workspace = true
@@ -24,7 +26,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 assert2.workspace = true
-forge-bus.workspace = true
+axum.workspace = true
 forge-testkit.workspace = true
 forge-topics.workspace = true
 tempfile.workspace = true

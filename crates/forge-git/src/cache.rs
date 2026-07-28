@@ -242,6 +242,37 @@ impl Cache {
         Ok(())
     }
 
+    /// Make the cache's references match `canonical`, deleting any others.
+    ///
+    /// The cache mirrors the log. A reference here that the log does not have
+    /// would be advertised to clients as real history.
+    pub fn sync_refs(
+        &self,
+        canonical: &[(String, Oid)],
+        default_branch: &str,
+    ) -> Result<(), CacheError> {
+        let existing = self.refs()?;
+        for (name, oid) in canonical {
+            if existing.iter().any(|(n, o)| n == name && o == oid) {
+                continue;
+            }
+            self.set_ref(name, *oid)?;
+        }
+        for (name, _) in existing {
+            if !canonical.iter().any(|(n, _)| *n == name) {
+                run_git(&self.path(), &["update-ref", "-d", &name])?;
+            }
+        }
+
+        // HEAD must name a branch that exists, or a clone reports an empty
+        // repository even though the objects and refs are all present.
+        let head = format!("refs/heads/{default_branch}");
+        if canonical.iter().any(|(name, _)| *name == head) {
+            self.set_head(&head)?;
+        }
+        Ok(())
+    }
+
     /// Every reference in the cache, as `(name, oid)`.
     pub fn refs(&self) -> Result<Vec<(String, Oid)>, CacheError> {
         let output = run_git(

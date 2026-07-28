@@ -8,7 +8,6 @@
 use std::{path::Path, sync::Arc};
 
 use assert2::check;
-use forge_bus::FencedWriter;
 use forge_git::{Cache, ObjectWriter, import};
 use forge_githttp::GitState;
 use forge_store::{RepoRecord, Store};
@@ -74,7 +73,9 @@ async fn serve_repo(source: &Path, owner: &str, name: &str) -> Option<Server> {
         .map(|(_, oid)| oid)
         .expect("source repo has a main branch");
     let objects = import::read_all_objects(source).unwrap();
-    let writer = FencedWriter::connect(&broker.bootstrap()).await.unwrap();
+    let writer = forge_git::connect_object_writer(&broker.bootstrap())
+        .await
+        .unwrap();
     ObjectWriter::new(&writer, repo_id)
         .put_all(&objects)
         .await
@@ -87,11 +88,13 @@ async fn serve_repo(source: &Path, owner: &str, name: &str) -> Option<Server> {
     cache.set_ref("refs/heads/main", head).unwrap();
     cache.set_head("refs/heads/main").unwrap();
 
-    let state = Arc::new(GitState {
+    // Clone-only: this file exercises the read path, so no write machinery is
+    // configured and pushes are refused.
+    let state = Arc::new(GitState::read_only(
         store,
-        bootstrap: broker.bootstrap(),
-        cache_root: cache_root.path().to_path_buf(),
-    });
+        broker.bootstrap(),
+        cache_root.path().to_path_buf(),
+    ));
     let app = forge_githttp::router().with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

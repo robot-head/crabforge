@@ -41,7 +41,15 @@ impl AppState {
     }
 
     /// Serve git over HTTP, caching repositories under `cache_root`.
-    pub fn with_git(mut self, cache_root: impl Into<std::path::PathBuf>) -> Self {
+    ///
+    /// `listen` is this server's own address: the pre-receive hook calls back
+    /// to it, so it has to be reachable from a subprocess on this host.
+    pub fn with_git(
+        mut self,
+        cache_root: impl Into<std::path::PathBuf>,
+        listen: &str,
+        object_writer: Arc<forge_bus::FencedWriter>,
+    ) -> Self {
         let store = self
             .store
             .clone()
@@ -50,6 +58,12 @@ impl AppState {
             store,
             bootstrap: self.bootstrap.clone(),
             cache_root: cache_root.into(),
+            commands: self.commands.clone(),
+            writer: Some(object_writer),
+            hook_callback_url: format!("http://{listen}/internal/hooks/pre-receive"),
+            // Minted per process, so a hook script left behind by an earlier
+            // run cannot approve a push against this one.
+            hook_token: mint_hook_token(),
         }));
         self
     }
@@ -108,6 +122,17 @@ impl AppState {
     pub fn is_fenced(&self) -> bool {
         self.commands.as_ref().is_some_and(|c| c.is_fenced())
     }
+}
+
+/// A random token authenticating the pre-receive hook's callback.
+fn mint_hook_token() -> String {
+    use std::hash::{BuildHasher as _, RandomState};
+
+    // Two independently seeded hasher states: enough entropy for a
+    // process-scoped, loopback-only secret without adding a dependency.
+    let a = RandomState::new().hash_one("crabforge-hook");
+    let b = RandomState::new().hash_one("crabforge-hook");
+    format!("{a:016x}{b:016x}")
 }
 
 impl ApiError {

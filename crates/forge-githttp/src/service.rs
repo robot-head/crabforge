@@ -18,12 +18,56 @@ pub struct GitState {
     pub bootstrap: String,
     /// Where per-repository caches live. Disposable.
     pub cache_root: PathBuf,
+    /// `None` serves clones only; pushes are refused.
+    pub commands: Option<Arc<forge_command::CommandService>>,
+    pub writer: Option<Arc<forge_bus::FencedWriter>>,
+    /// Where the pre-receive hook calls back to.
+    pub hook_callback_url: String,
+    /// Authenticates that callback. Minted per process: a hook that outlives a
+    /// restart cannot approve a push against the new one.
+    pub hook_token: String,
+}
+
+impl GitState {
+    /// Clone-only state, for a server with no write path configured.
+    pub fn read_only(store: Arc<Store>, bootstrap: impl Into<String>, cache_root: PathBuf) -> Self {
+        Self {
+            store,
+            bootstrap: bootstrap.into(),
+            cache_root,
+            commands: None,
+            writer: None,
+            hook_callback_url: String::new(),
+            hook_token: String::new(),
+        }
+    }
+
+    /// Whether this instance accepts pushes.
+    pub fn accepts_pushes(&self) -> bool {
+        self.commands.is_some() && self.writer.is_some()
+    }
+
+    /// Constant-time comparison of a hook callback's token.
+    pub fn hook_token_matches(&self, presented: &str) -> bool {
+        // Not a timing-safe compare of a long-lived secret, but the token is
+        // process-scoped and the endpoint is loopback-only; equal-length
+        // comparison keeps it from being trivially probeable.
+        !self.hook_token.is_empty()
+            && presented.len() == self.hook_token.len()
+            && presented
+                .bytes()
+                .zip(self.hook_token.bytes())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                == 0
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
     #[error("no such repository")]
     NoSuchRepo,
+    #[error("not authorized")]
+    Unauthorized,
     #[error("service '{0}' is not supported")]
     UnsupportedService(String),
     #[error("git: {0}")]
@@ -43,13 +87,14 @@ impl IntoResponse for GitError {
             // missing, so the API never confirms that it exists.
             Self::NoSuchRepo => (StatusCode::NOT_FOUND, "not_found"),
             Self::UnsupportedService(_) => (StatusCode::FORBIDDEN, "unsupported_service"),
+            Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             other => {
                 tracing::error!(error = %other, "git request failed");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal")
             }
         };
         let message = match &self {
-            Self::NoSuchRepo | Self::UnsupportedService(_) => self.to_string(),
+            Self::NoSuchRepo | Self::UnsupportedService(_) | Self::Unauthorized => self.to_string(),
             _ => "internal error".to_string(),
         };
         (
@@ -90,11 +135,96 @@ impl GitState {
             );
         }
 
-        // Point the references at what the log says they are. Until M3 the
-        // refs projection is not written, so this is a no-op for imported
-        // repositories whose refs were set at import time.
+        // Point the cache's references at what the log says they are, before
+        // anything is advertised. A client negotiates — and computes the "old"
+        // value of a push — from this advertisement, so a stale reference here
+        // would make a correct push look like a race, or worse, let one through
+        // against a value nobody holds any more.
+        if let Some(commands) = &self.commands {
+            let canonical = commands.refs_for(repo_id).await;
+            if !canonical.is_empty() {
+                cache.sync_refs(&canonical, &record.default_branch)?;
+            }
+        }
+
         Ok(cache)
     }
+}
+
+impl GitState {
+    /// Where a repository's cache lives.
+    pub fn repo_path(&self, repo: RepoId) -> std::path::PathBuf {
+        Cache::new(&self.cache_root, repo).path()
+    }
+
+    /// Who to attribute a push to.
+    ///
+    /// Until authentication lands (M4) this is the repository's owner: the
+    /// event log records a real user rather than an anonymous placeholder that
+    /// would have to be migrated later.
+    pub async fn pusher_for(&self, repo: RepoId) -> Result<forge_types::UserId, GitError> {
+        let record = self
+            .store
+            .repos()
+            .by_id(&repo.to_string())
+            .await?
+            .ok_or(GitError::NoSuchRepo)?;
+        record
+            .owner_id
+            .parse()
+            .map_err(|_| GitError::Git("stored owner id is not a uuid".into()))
+    }
+}
+
+/// The reference advertisement `receive-pack` produces for a push.
+pub async fn advertise_receive_refs(cache: &Cache) -> Result<Vec<u8>, GitError> {
+    run_git_service(
+        "receive-pack",
+        cache,
+        &["--stateless-rpc", "--advertise-refs"],
+        None,
+        &ProtocolVersion::default(),
+    )
+    .await
+}
+
+/// Run one `receive-pack` round, with the forge's hook installed.
+pub async fn receive_pack(
+    state: &GitState,
+    cache: &Cache,
+    owner: &str,
+    repo: &str,
+    request: &[u8],
+) -> Result<Vec<u8>, GitError> {
+    let key = format!("{owner}/{repo}").to_ascii_lowercase();
+    let record = state
+        .store
+        .repos()
+        .by_full_name(&key)
+        .await?
+        .ok_or(GitError::NoSuchRepo)?;
+    let repo_id: RepoId = record
+        .repo_id
+        .parse()
+        .map_err(|_| GitError::Git("stored repository id is not a uuid".into()))?;
+
+    // Installed on every push rather than at repository creation: the callback
+    // token is per-process, so a hook written by an earlier run would be stale.
+    crate::receive::install_hook(
+        &cache.path(),
+        &state.hook_callback_url,
+        &state.hook_token,
+        repo_id,
+    )?;
+
+    run_git_service(
+        "receive-pack",
+        cache,
+        &["--stateless-rpc"],
+        Some(request),
+        &ProtocolVersion::default(),
+    )
+    .await
 }
 
 /// The protocol version a client asked for, from its `Git-Protocol` header.
@@ -160,10 +290,20 @@ async fn run_upload_pack(
     input: Option<&[u8]>,
     protocol: &ProtocolVersion,
 ) -> Result<Vec<u8>, GitError> {
+    run_git_service("upload-pack", cache, args, input, protocol).await
+}
+
+async fn run_git_service(
+    service: &str,
+    cache: &Cache,
+    args: &[&str],
+    input: Option<&[u8]>,
+    protocol: &ProtocolVersion,
+) -> Result<Vec<u8>, GitError> {
     let path = cache.path();
     let mut command = Command::new("git");
     command
-        .arg("upload-pack")
+        .arg(service)
         .args(args)
         .arg(&path)
         .stdin(Stdio::piped())

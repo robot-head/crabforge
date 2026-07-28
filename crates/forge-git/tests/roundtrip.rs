@@ -26,7 +26,9 @@ impl Fixture {
         forge_topics::ensure_repo(&mut admin, repo)
             .await
             .expect("create the repository's object topic");
-        let writer = FencedWriter::connect(&broker.bootstrap()).await.unwrap();
+        let writer = forge_git::connect_object_writer(&broker.bootstrap())
+            .await
+            .unwrap();
         Self {
             broker,
             writer,

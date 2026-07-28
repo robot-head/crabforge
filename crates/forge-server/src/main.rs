@@ -71,10 +71,19 @@ async fn main() -> Result<()> {
         .context("starting the command service")?;
 
     std::fs::create_dir_all(&args.cache_root).context("creating the git cache directory")?;
+
+    // Git objects get their own transactional identity: sharing the command
+    // service's would fence it on the first push.
+    let object_writer = Arc::new(
+        forge_git::connect_object_writer(&args.bootstrap)
+            .await
+            .context("connecting the object writer")?,
+    );
+
     let mut state = AppState::new(&args.bootstrap)
         .with_commands(Arc::clone(&commands))
         .with_store(Arc::clone(&store))
-        .with_git(&args.cache_root);
+        .with_git(&args.cache_root, &args.listen, object_writer);
 
     // One projector per event topic. Each catches up before the server starts
     // listening, so the first request does not race an empty read model.

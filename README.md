@@ -30,8 +30,9 @@ Early. See [docs/PLAN.md](docs/PLAN.md) for the architecture and milestone plan.
 | M0 workspace, topic taxonomy, dev loop, in-process broker tests | done |
 | M1 event spine — fenced writer, projector, JSON API, read-your-writes | done |
 | M2 git read path — object topics, disposable cache, `git clone` | done |
-| M3 git write path (push, quarantine, reference CAS) | next |
-| M4–M7 browsing, issues, PRs, webhooks, CI, observability | planned |
+| M3 git write path — `git push`, quarantine, reference compare-and-swap | done |
+| M4 browsing, issues, authentication, web UI | next |
+| M5–M7 pull requests, webhooks, CI, observability | planned |
 
 Working today: register a user, create a repository, read both back — with the
 log as the only source of truth and gres as a rebuildable projection of it.
@@ -48,11 +49,14 @@ curl -X POST localhost:7000/api/v1/repos \
 curl localhost:7000/api/v1/repos/octocat/Hello-World
 
 git clone http://localhost:7000/octocat/Hello-World.git
+cd Hello-World && git push origin main
 ```
 
-The clone is served by replaying the repository's object topic into a local
-cache and handing that to `git upload-pack`. Delete the cache and clone again —
-it is rebuilt from the log.
+Clones are served by replaying the repository's object topic into a local cache
+and handing that to `git upload-pack`. Delete the cache and clone again — it is
+rebuilt from the log. Pushes write objects to the topic and move references
+through a compare-and-swap held by the command service, so two people pushing
+from the same commit cannot silently overwrite each other.
 
 ## Getting started
 

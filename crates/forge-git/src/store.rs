@@ -42,6 +42,15 @@ pub struct ObjectWriter<'a> {
 /// broker's frame limit when its records are batched together.
 const BATCH: usize = 64;
 
+/// Connect a writer for git objects.
+///
+/// Uses [`forge_bus::OBJECT_TRANSACTIONAL_ID`] rather than the command
+/// service's identity: sharing one would fence the command service on the first
+/// object write.
+pub async fn connect_object_writer(bootstrap: &str) -> Result<FencedWriter, WriteError> {
+    FencedWriter::connect_with_id(bootstrap, forge_bus::OBJECT_TRANSACTIONAL_ID).await
+}
+
 impl<'a> ObjectWriter<'a> {
     pub fn new(writer: &'a FencedWriter, repo: RepoId) -> Self {
         Self {
