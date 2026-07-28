@@ -35,9 +35,13 @@ impl Harness {
             .with_store(Arc::clone(&store));
 
         for topic in [topics::EVENTS_USERS, topics::EVENTS_REPOS] {
-            let projector = Projector::open(&broker.bootstrap(), topic, Arc::clone(&store))
-                .await
-                .unwrap();
+            let projector = Projector::open(
+                &broker.bootstrap(),
+                topic,
+                Store::connect(&gres.dsn()).await.unwrap(),
+            )
+            .await
+            .unwrap();
             state = state.with_projection(topic, projector.applied());
             tokio::spawn(async move {
                 let _ = projector.run().await;

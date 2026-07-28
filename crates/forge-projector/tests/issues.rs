@@ -11,6 +11,7 @@ use forge_types::{RepoId, UserId, Username, Visibility, topics};
 
 struct Harness {
     _gres: forge_testkit::Gres,
+    dsn: String,
     broker: TestBroker,
     store: Arc<Store>,
     commands: Arc<CommandService>,
@@ -46,6 +47,7 @@ impl Harness {
             .unwrap();
 
         Some(Self {
+            dsn: gres.dsn(),
             _gres: gres,
             broker,
             store,
@@ -59,7 +61,7 @@ impl Harness {
         Projector::open(
             &self.broker.bootstrap(),
             topics::EVENTS_ISSUES,
-            Arc::clone(&self.store),
+            Store::connect(&self.dsn).await.unwrap(),
         )
         .await
         .unwrap()

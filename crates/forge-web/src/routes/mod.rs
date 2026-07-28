@@ -3,4 +3,5 @@
 pub mod auth;
 pub mod issues;
 pub mod profile;
+pub mod pulls;
 pub mod repo;

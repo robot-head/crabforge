@@ -185,6 +185,75 @@ pub struct NewIssuePage {
     pub open_issues: i64,
 }
 
+/// One row in a pull request list.
+pub struct PullRow {
+    pub number: i64,
+    pub title: String,
+    pub author: String,
+    pub source_branch: String,
+    pub target_branch: String,
+    pub merged: bool,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "pulls/list.html")]
+pub struct PullsPage {
+    pub viewer: MaybeViewer,
+    pub csrf: String,
+    pub owner: String,
+    pub repo: String,
+    pub description: Option<String>,
+    pub private: bool,
+    pub default_branch: String,
+    pub open_issues: i64,
+    pub showing_open: bool,
+    pub open_count: i64,
+    pub closed_count: i64,
+    pub pulls: Vec<PullRow>,
+}
+
+/// One review on a pull request.
+pub struct ReviewView {
+    pub reviewer: String,
+    pub verdict_label: String,
+    pub verdict_class: String,
+    pub body: Option<Safe<String>>,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "pulls/detail.html")]
+pub struct PullDetailPage {
+    pub viewer: MaybeViewer,
+    pub csrf: String,
+    pub owner: String,
+    pub repo: String,
+    pub description: Option<String>,
+    pub private: bool,
+    pub default_branch: String,
+    pub open_issues: i64,
+    pub number: i64,
+    pub title: String,
+    pub state_label: String,
+    pub state_class: String,
+    pub open: bool,
+    pub merged: bool,
+    pub mergeable: bool,
+    pub conflicted: bool,
+    pub conflicts: Vec<String>,
+    pub author: String,
+    pub body: Option<Safe<String>>,
+    pub source_branch: String,
+    pub target_branch: String,
+    pub head_oid: String,
+    pub merge_commit: String,
+    pub merged_by: Option<String>,
+    pub commit_count: i64,
+    pub reviews: Vec<ReviewView>,
+    /// git's own diff output. Escaped by askama, deliberately.
+    pub diff: String,
+    pub can_write: bool,
+}
+
 /// One repository on a profile.
 pub struct RepoRow {
     pub name: String,

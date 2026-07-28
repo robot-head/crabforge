@@ -63,4 +63,14 @@ pub fn router() -> axum::Router<Arc<WebState>> {
             "/{owner}/{repo}/issues/{number}/comments",
             post(routes::issues::comment),
         )
+        .route("/{owner}/{repo}/pulls", get(routes::pulls::list))
+        .route("/{owner}/{repo}/pulls/{number}", get(routes::pulls::detail))
+        .route(
+            "/{owner}/{repo}/pulls/{number}/reviews",
+            post(routes::pulls::review),
+        )
+        .route(
+            "/{owner}/{repo}/pulls/{number}/merge",
+            post(routes::pulls::merge),
+        )
 }

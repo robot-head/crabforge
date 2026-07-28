@@ -44,10 +44,15 @@ impl AppState {
     }
 
     /// Serve the browser interface.
+    ///
+    /// `object_writer` is the same one the git endpoints use: merging writes
+    /// git objects, and it must not share the command service's transactional
+    /// identity or the first merge would fence it.
     pub fn with_web(
         mut self,
         cache_root: impl Into<std::path::PathBuf>,
         secure_cookies: bool,
+        object_writer: Arc<forge_bus::FencedWriter>,
     ) -> Self {
         let store = self
             .store
@@ -63,6 +68,7 @@ impl AppState {
             csrf_secret: mint_hook_token().into_bytes(),
             secure_cookies,
             applied: self.applied_offsets.clone(),
+            object_writer: Some(object_writer),
         }));
         self
     }

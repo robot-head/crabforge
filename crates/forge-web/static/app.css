@@ -88,3 +88,11 @@ button.secondary { background: var(--surface); color: var(--fg); border-color: v
 .error-page { text-align: center; padding: 4rem 0; }
 .error-page h1 { font-size: 3rem; margin: 0; color: var(--muted); }
 .number { color: var(--muted); font-weight: 400; }
+
+.merge-box { border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+.merge-box pre { background: var(--surface); padding: .75rem; border-radius: 6px; overflow-x: auto; }
+.chip.merged { background: #8250df; color: #fff; border-color: transparent; }
+.chip.approve { background: var(--open); color: #fff; border-color: transparent; }
+.chip.request_changes { background: var(--closed); color: #fff; border-color: transparent; }
+ul.conflicts { margin: .5rem 0; }
+.muted { color: var(--muted); }

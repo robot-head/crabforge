@@ -15,6 +15,7 @@ use forge_types::{Username, Visibility, topics};
 
 struct Harness {
     _gres: forge_testkit::Gres,
+    dsn: String,
     broker: TestBroker,
     store: Arc<Store>,
     commands: Arc<CommandService>,
@@ -30,6 +31,7 @@ impl Harness {
             .await
             .expect("start command service");
         Some(Self {
+            dsn: gres.dsn(),
             _gres: gres,
             broker,
             store,
@@ -38,9 +40,13 @@ impl Harness {
     }
 
     async fn projector(&self, topic: &str) -> Projector {
-        Projector::open(&self.broker.bootstrap(), topic, Arc::clone(&self.store))
-            .await
-            .expect("open projector")
+        Projector::open(
+            &self.broker.bootstrap(),
+            topic,
+            Store::connect(&self.dsn).await.unwrap(),
+        )
+        .await
+        .expect("open projector")
     }
 }
 

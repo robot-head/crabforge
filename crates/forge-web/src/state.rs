@@ -27,6 +27,10 @@ pub struct WebState {
     pub secure_cookies: bool,
     /// Projection progress per topic, for reading a write back after making it.
     pub applied: std::collections::HashMap<String, watch::Receiver<i64>>,
+    /// Writes git objects a merge creates. Separate from the command service's
+    /// writer: they are different logical writers and sharing an identity would
+    /// fence one of them.
+    pub object_writer: Option<Arc<forge_bus::FencedWriter>>,
 }
 
 impl WebState {

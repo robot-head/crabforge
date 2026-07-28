@@ -1,0 +1,64 @@
+{% extends "../repo/layout.html" %}
+{% block repo_content %}
+<div class="issue-header">
+  <h2>{{ title }} <span class="number">#{{ number }}</span></h2>
+  <p class="meta">
+    <span class="chip {{ state_class }}">{{ state_label }}</span>
+    {{ author }} wants to merge <code>{{ source_branch }}</code> into <code>{{ target_branch }}</code>
+    &middot; {{ commit_count }} commits
+  </p>
+</div>
+
+{% match body %}
+  {% when Some with (b) %}<article class="comment"><header>{{ author }}</header><div class="markdown">{{ b }}</div></article>
+  {% when None %}
+{% endmatch %}
+
+{% for r in reviews %}
+  <article class="comment">
+    <header>{{ r.reviewer }} <span class="chip {{ r.verdict_class }}">{{ r.verdict_label }}</span></header>
+    {% match r.body %}{% when Some with (b) %}<div class="markdown">{{ b }}</div>{% when None %}{% endmatch %}
+  </article>
+{% endfor %}
+
+<div class="merge-box">
+  {% if merged %}
+    <p>Merged as <code>{{ merge_commit }}</code>{% match merged_by %}{% when Some with (m) %} by {{ m }}{% when None %}{% endmatch %}.</p>
+  {% else if !open %}
+    <p>This pull request is closed.</p>
+  {% else if conflicted %}
+    <p class="error">These branches have conflicts that must be resolved.</p>
+    <ul class="conflicts">{% for f in conflicts %}<li><code>{{ f }}</code></li>{% endfor %}</ul>
+    <pre><code>git fetch origin
+git checkout {{ source_branch }}
+git merge origin/{{ target_branch }}</code></pre>
+  {% else if mergeable %}
+    {% if can_write %}
+      <form method="post" action="/{{ owner }}/{{ repo }}/pulls/{{ number }}/merge">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="expected_head" value="{{ head_oid }}">
+        <button type="submit">Merge pull request</button>
+      </form>
+    {% else %}
+      <p>These branches can be merged.</p>
+    {% endif %}
+  {% else %}
+    <p class="muted">Checking whether these branches can be merged&hellip;</p>
+  {% endif %}
+</div>
+
+{% if can_write && open %}
+  <form method="post" action="/{{ owner }}/{{ repo }}/pulls/{{ number }}/reviews" class="composer">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <textarea name="body" rows="4" placeholder="Leave a review"></textarea>
+    <div class="actions">
+      <button type="submit" name="verdict" value="approve">Approve</button>
+      <button type="submit" name="verdict" value="request_changes" class="secondary">Request changes</button>
+      <button type="submit" name="verdict" value="comment" class="secondary">Comment</button>
+    </div>
+  </form>
+{% endif %}
+
+<h3>Changes</h3>
+<pre class="diff"><code>{{ diff }}</code></pre>
+{% endblock %}

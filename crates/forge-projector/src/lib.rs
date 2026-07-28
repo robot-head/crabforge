@@ -28,7 +28,7 @@
 //! wait on that to read their own writes: the API returns only once the
 //! projection covers the offset the command committed at.
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use forge_bus::{TailError, Tailer};
 use forge_events::{IssueEvent, PrEvent, RepoEvent, UserEvent, decode_raw};
@@ -52,19 +52,22 @@ pub enum ProjectorError {
 }
 
 /// Projects one topic.
+///
+/// Owns its database connection rather than sharing one. Each batch is applied
+/// inside a `BEGIN`/`COMMIT`, and a transaction belongs to a session: two
+/// projectors sharing a connection would interleave their transaction
+/// boundaries, so one would commit inside another's transaction and a cursor
+/// would advance over rows that were never written. Taking the `Store` by value
+/// makes that unrepresentable — `Store` is not `Clone`.
 pub struct Projector {
     tailer: Tailer,
-    store: Arc<Store>,
+    store: Store,
     applied: watch::Sender<i64>,
 }
 
 impl Projector {
     /// Open a projector positioned at its durable cursor.
-    pub async fn open(
-        bootstrap: &str,
-        topic: &str,
-        store: Arc<Store>,
-    ) -> Result<Self, ProjectorError> {
+    pub async fn open(bootstrap: &str, topic: &str, store: Store) -> Result<Self, ProjectorError> {
         // Resume from gres, not from a broker-side consumer group offset: the
         // cursor has to move atomically with the rows, so it lives with them.
         let resume_from = store.cursors().applied_offset(topic).await?;

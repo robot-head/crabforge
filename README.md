@@ -32,8 +32,9 @@ Early. See [docs/PLAN.md](docs/PLAN.md) for the architecture and milestone plan.
 | M2 git read path — object topics, disposable cache, `git clone` | done |
 | M3 git write path — `git push`, quarantine, reference compare-and-swap | done |
 | M4 browsing, issues, authentication, web UI | done |
-| M5 pull requests (open, review, merge) | next |
-| M6–M7 webhooks, CI, observability | planned |
+| M5 pull requests — open, review, merge | done |
+| M6 webhooks and Crab Actions CI | next |
+| M7 observability, hardening, disaster drill | planned |
 
 Working today: register a user, create a repository, read both back — with the
 log as the only source of truth and gres as a rebuildable projection of it.
@@ -55,7 +56,7 @@ cd Hello-World && git push origin main
 
 Or open <http://localhost:7000> and use it: register, browse a repository with
 syntax highlighting and a rendered README, read commit history, file and discuss
-issues.
+issues, open a pull request and merge it.
 
 Clones are served by replaying the repository's object topic into a local cache
 and handing that to `git upload-pack`. Delete the cache and clone again — it is

@@ -91,12 +91,23 @@ async fn main() -> Result<()> {
     let mut state = AppState::new(&args.bootstrap)
         .with_commands(Arc::clone(&commands))
         .with_store(Arc::clone(&store))
-        .with_git(&args.cache_root, &args.listen, object_writer);
+        .with_git(&args.cache_root, &args.listen, Arc::clone(&object_writer));
 
     // One projector per event topic. Each catches up before the server starts
     // listening, so the first request does not race an empty read model.
-    for topic in [topics::EVENTS_USERS, topics::EVENTS_REPOS] {
-        let mut projector = Projector::open(&args.bootstrap, topic, Arc::clone(&store))
+    for topic in [
+        topics::EVENTS_USERS,
+        topics::EVENTS_REPOS,
+        topics::EVENTS_ISSUES,
+        topics::EVENTS_PRS,
+        topics::EVENTS_GIT_REFS,
+    ] {
+        // Its own connection: a projector runs transactions, and a transaction
+        // belongs to a session.
+        let projector_store = Store::connect(&args.dsn)
+            .await
+            .with_context(|| format!("connecting a database session for {topic}"))?;
+        let mut projector = Projector::open(&args.bootstrap, topic, projector_store)
             .await
             .with_context(|| format!("opening projector for {topic}"))?;
         let applied = projector.applied();
@@ -116,7 +127,7 @@ async fn main() -> Result<()> {
 
     // Stylesheets are embedded in the binary and served by the web router, so
     // a deployment is one file with no asset path to misconfigure.
-    let state = state.with_web(&args.cache_root, args.secure_cookies);
+    let state = state.with_web(&args.cache_root, args.secure_cookies, object_writer);
     let app = router(Arc::new(state));
 
     let listener = tokio::net::TcpListener::bind(&args.listen)

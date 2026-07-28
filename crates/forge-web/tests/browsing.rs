@@ -26,6 +26,10 @@ struct Site {
     cache_root: tempfile::TempDir,
     store: Arc<Store>,
     commands: Arc<CommandService>,
+    /// One writer for the whole site. Object writes share a transactional
+    /// identity, so a second one would fence this and every later write would
+    /// fail — which is the fencing mechanism working, not a bug in it.
+    object_writer: Arc<forge_bus::FencedWriter>,
     app: axum::Router,
     /// The session cookie, once signed in.
     cookie: Option<String>,
@@ -41,18 +45,35 @@ impl Site {
         store.migrate().await.unwrap();
         let commands = CommandService::start(&broker.bootstrap()).await.unwrap();
 
+        let object_writer = Arc::new(
+            forge_git::connect_object_writer(&broker.bootstrap())
+                .await
+                .unwrap(),
+        );
+
         let mut applied = HashMap::new();
         for topic in [
             topics::EVENTS_USERS,
             topics::EVENTS_REPOS,
             topics::EVENTS_ISSUES,
+            topics::EVENTS_PRS,
+            topics::EVENTS_GIT_REFS,
         ] {
-            let projector = Projector::open(&broker.bootstrap(), topic, Arc::clone(&store))
-                .await
-                .unwrap();
+            let projector = Projector::open(
+                &broker.bootstrap(),
+                topic,
+                Store::connect(&gres.dsn()).await.unwrap(),
+            )
+            .await
+            .unwrap();
             applied.insert(topic.to_string(), projector.applied());
+            let name = topic.to_string();
             tokio::spawn(async move {
-                let _ = projector.run().await;
+                if let Err(e) = projector.run().await {
+                    // Swallowing this hides exactly the failures these tests
+                    // exist to catch.
+                    eprintln!("PROJECTOR {name} DIED: {e}");
+                }
             });
         }
 
@@ -64,6 +85,7 @@ impl Site {
             csrf_secret: b"test-secret".to_vec(),
             secure_cookies: false,
             applied,
+            object_writer: Some(Arc::clone(&object_writer)),
         });
 
         Some(Self {
@@ -72,6 +94,7 @@ impl Site {
             cache_root,
             store,
             commands,
+            object_writer,
             app: router().with_state(state),
             cookie: None,
         })
@@ -302,10 +325,7 @@ impl Site {
 
         let source = tempfile::tempdir().unwrap();
         let head = import::make_test_repo(source.path(), files).unwrap();
-        let writer = forge_git::connect_object_writer(&self.broker.bootstrap())
-            .await
-            .unwrap();
-        ObjectWriter::new(&writer, repo.id)
+        ObjectWriter::new(&self.object_writer, repo.id)
             .put_all(&import::read_all_objects(source.path()).unwrap())
             .await
             .unwrap();
@@ -540,4 +560,328 @@ async fn a_signed_out_visitor_can_read_but_not_write() {
         )
         .await;
     check!(status == StatusCode::UNAUTHORIZED);
+}
+
+impl Site {
+    /// Push a branch into an existing repository, through the command path.
+    async fn add_branch(&self, owner: &str, name: &str, branch: &str, content: &[u8]) {
+        let key = format!("{owner}/{name}").to_ascii_lowercase();
+        let record = self
+            .store
+            .repos()
+            .by_full_name(&key)
+            .await
+            .unwrap()
+            .expect("repository should exist");
+        let repo_id: forge_types::RepoId = record.repo_id.parse().unwrap();
+
+        let source = tempfile::tempdir().unwrap();
+        import::make_test_repo(source.path(), &[("f.txt", b"one\ntwo\nthree\n")]).unwrap();
+
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(source.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        run(&["checkout", "-qb", branch]);
+        std::fs::write(source.path().join("f.txt"), content).unwrap();
+        run(&["commit", "-qam", "branch work"]);
+
+        let main: forge_types::Oid = run(&["rev-parse", "main"]).parse().unwrap();
+        let tip: forge_types::Oid = run(&["rev-parse", branch]).parse().unwrap();
+
+        ObjectWriter::new(&self.object_writer, repo_id)
+            .put_all(&import::read_all_objects(source.path()).unwrap())
+            .await
+            .unwrap();
+
+        self.commands
+            .update_refs(
+                repo_id,
+                vec![
+                    forge_command::RefUpdate {
+                        name: "refs/heads/main".into(),
+                        expected_old: None,
+                        new: Some(main),
+                    },
+                    forge_command::RefUpdate {
+                        name: format!("refs/heads/{branch}"),
+                        expected_old: None,
+                        new: Some(tip),
+                    },
+                ],
+                self.user_id(owner).await,
+            )
+            .await
+            .unwrap();
+
+        let cache = forge_git::Cache::new(self.cache_root.path(), repo_id);
+        cache
+            .hydrate(&self.broker.bootstrap(), "main")
+            .await
+            .unwrap();
+        cache
+            .sync_refs(&self.commands.refs_for(repo_id).await, "main")
+            .unwrap();
+    }
+
+    /// Open a pull request and return its number.
+    async fn open_pull(&self, owner: &str, name: &str, branch: &str) -> i64 {
+        let key = format!("{owner}/{name}").to_ascii_lowercase();
+        let record = self
+            .store
+            .repos()
+            .by_full_name(&key)
+            .await
+            .unwrap()
+            .unwrap();
+        let repo_id: forge_types::RepoId = record.repo_id.parse().unwrap();
+        let cache = forge_git::Cache::new(self.cache_root.path(), repo_id);
+
+        let pr = self
+            .commands
+            .open_pull(forge_command::OpenPull {
+                repo: repo_id,
+                author: self.user_id(owner).await,
+                author_name: owner.into(),
+                title: "Merge my work".into(),
+                body: Some("Please **review**.".into()),
+                source_branch: branch.into(),
+                target_branch: "main".into(),
+                head_oid: cache.resolve(branch).unwrap().unwrap(),
+                base_oid: cache.resolve("main").unwrap().unwrap(),
+            })
+            .await
+            .unwrap();
+
+        forge_testkit::eventually(
+            "the pull request to be projected",
+            std::time::Duration::from_secs(10),
+            || {
+                let store = Arc::clone(&self.store);
+                let id = pr.id.to_string();
+                async move { store.pulls().by_id(&id).await.unwrap().is_some() }
+            },
+        )
+        .await;
+
+        // Compute mergeability, as the worker would.
+        let record = self
+            .store
+            .pulls()
+            .by_id(&pr.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        forge_githttp::refresh_mergeability(&cache, &self.commands, repo_id, &record)
+            .await
+            .unwrap();
+        forge_testkit::eventually(
+            "mergeability to be recorded",
+            std::time::Duration::from_secs(10),
+            || {
+                let store = Arc::clone(&self.store);
+                let id = pr.id.to_string();
+                async move {
+                    store
+                        .pulls()
+                        .by_id(&id)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .mergeability()
+                        != forge_store::Mergeable::Unknown
+                }
+            },
+        )
+        .await;
+
+        record.number
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pull_request_renders_with_its_diff_and_merge_button() {
+    let Some(mut site) = Site::start().await else {
+        return;
+    };
+    site.sign_up("octocat").await;
+    site.seed_repo("octocat", "hello", &[("f.txt", b"one\ntwo\nthree\n")])
+        .await;
+    site.add_branch("octocat", "hello", "feature", b"ONE\ntwo\nthree\n")
+        .await;
+    let number = site.open_pull("octocat", "hello", "feature").await;
+
+    let (status, body) = site.get(&format!("/octocat/hello/pulls/{number}")).await;
+    check!(status == StatusCode::OK, "got {status}");
+    check!(body.contains("Merge my work"));
+    check!(
+        body.contains("<strong>review</strong>"),
+        "the body renders as markdown"
+    );
+    check!(body.contains("feature"), "and names the branches");
+    check!(
+        body.contains("Merge pull request"),
+        "the button should be offered"
+    );
+    check!(body.contains("+ONE"), "the diff should show the change");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn merging_through_the_browser_moves_the_branch() {
+    let Some(mut site) = Site::start().await else {
+        return;
+    };
+    site.sign_up("octocat").await;
+    site.seed_repo("octocat", "hello", &[("f.txt", b"one\ntwo\nthree\n")])
+        .await;
+    site.add_branch("octocat", "hello", "feature", b"ONE\ntwo\nthree\n")
+        .await;
+    let number = site.open_pull("octocat", "hello", "feature").await;
+
+    let key = "octocat/hello";
+    let record = site.store.repos().by_full_name(key).await.unwrap().unwrap();
+    let repo_id: forge_types::RepoId = record.repo_id.parse().unwrap();
+    let before = site
+        .commands
+        .refs_for(repo_id)
+        .await
+        .into_iter()
+        .find(|(n, _)| n == "refs/heads/main")
+        .unwrap()
+        .1;
+
+    let path = format!("/octocat/hello/pulls/{number}");
+    let csrf = site.csrf(&path).await;
+    let head = site
+        .store
+        .pulls()
+        .by_number(&record.repo_id, number)
+        .await
+        .unwrap()
+        .unwrap()
+        .head_oid;
+
+    let (status, _) = site
+        .post(
+            &format!("{path}/merge"),
+            &format!("csrf={csrf}&expected_head={head}"),
+        )
+        .await;
+    check!(status == StatusCode::SEE_OTHER, "got {status}");
+
+    let after = site
+        .commands
+        .refs_for(repo_id)
+        .await
+        .into_iter()
+        .find(|(n, _)| n == "refs/heads/main")
+        .unwrap()
+        .1;
+    check!(after != before, "main should have advanced");
+
+    forge_testkit::eventually(
+        "the merge to be projected",
+        std::time::Duration::from_secs(10),
+        || {
+            let store = Arc::clone(&site.store);
+            let repo = record.repo_id.clone();
+            async move {
+                store
+                    .pulls()
+                    .by_number(&repo, number)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .is_merged()
+            }
+        },
+    )
+    .await;
+
+    let (_, body) = site.get(&path).await;
+    check!(body.contains("Merged as"), "the page should show it merged");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn merging_against_a_stale_head_is_refused() {
+    // The reviewer approved one diff; if the branch moved, a different one
+    // would land.
+    let Some(mut site) = Site::start().await else {
+        return;
+    };
+    site.sign_up("octocat").await;
+    site.seed_repo("octocat", "hello", &[("f.txt", b"one\ntwo\nthree\n")])
+        .await;
+    site.add_branch("octocat", "hello", "feature", b"ONE\ntwo\nthree\n")
+        .await;
+    let number = site.open_pull("octocat", "hello", "feature").await;
+
+    let path = format!("/octocat/hello/pulls/{number}");
+    let csrf = site.csrf(&path).await;
+    let (status, _) = site
+        .post(
+            &format!("{path}/merge"),
+            &format!("csrf={csrf}&expected_head=0000000000000000000000000000000000000000"),
+        )
+        .await;
+
+    check!(
+        status == StatusCode::UNPROCESSABLE_ENTITY,
+        "a merge from a stale page must be refused, got {status}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_review_appears_on_the_pull_request() {
+    let Some(mut site) = Site::start().await else {
+        return;
+    };
+    site.sign_up("octocat").await;
+    site.seed_repo("octocat", "hello", &[("f.txt", b"one\ntwo\nthree\n")])
+        .await;
+    site.add_branch("octocat", "hello", "feature", b"ONE\ntwo\nthree\n")
+        .await;
+    let number = site.open_pull("octocat", "hello", "feature").await;
+
+    let path = format!("/octocat/hello/pulls/{number}");
+    let csrf = site.csrf(&path).await;
+    let (status, _) = site
+        .post(
+            &format!("{path}/reviews"),
+            &format!("csrf={csrf}&body=Looks+good&verdict=approve"),
+        )
+        .await;
+    check!(status == StatusCode::SEE_OTHER);
+
+    let (_, body) = site.get(&path).await;
+    check!(body.contains("Approved"));
+    check!(body.contains("Looks good"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_signed_out_visitor_sees_no_merge_button() {
+    let Some(mut site) = Site::start().await else {
+        return;
+    };
+    site.sign_up("octocat").await;
+    site.seed_repo("octocat", "hello", &[("f.txt", b"one\ntwo\nthree\n")])
+        .await;
+    site.add_branch("octocat", "hello", "feature", b"ONE\ntwo\nthree\n")
+        .await;
+    let number = site.open_pull("octocat", "hello", "feature").await;
+    site.cookie = None;
+
+    let (status, body) = site.get(&format!("/octocat/hello/pulls/{number}")).await;
+    check!(
+        status == StatusCode::OK,
+        "the pull request is still readable"
+    );
+    check!(!body.contains("Merge pull request</button>"));
+    check!(body.contains("can be merged"), "but it says so");
 }
