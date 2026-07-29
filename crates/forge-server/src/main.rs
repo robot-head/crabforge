@@ -9,6 +9,8 @@ use anyhow::{Context as _, Result};
 use clap::Parser;
 use forge_command::CommandService;
 use forge_projector::Projector;
+
+mod telemetry;
 use forge_server::{AppState, router};
 use forge_store::Store;
 use forge_types::topics;
@@ -61,12 +63,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    // Held for the process's lifetime: dropping the guard flushes, and the
+    // spans of a shutdown are the ones worth having.
+    let _telemetry = telemetry::init("crabforge-server")?;
 
     let args = Args::parse();
 

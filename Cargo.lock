@@ -2047,9 +2047,12 @@ dependencies = [
  "forge-bus",
  "forge-command",
  "forge-events",
+ "forge-git",
  "forge-store",
  "forge-testkit",
+ "forge-topics",
  "forge-types",
+ "tempfile",
  "thiserror 2.0.19",
  "time",
  "tokio",
@@ -2079,6 +2082,7 @@ dependencies = [
  "axum",
  "clap",
  "crabka-client-admin",
+ "crabka-telemetry",
  "forge-bus",
  "forge-ci",
  "forge-command",
@@ -2100,6 +2104,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
