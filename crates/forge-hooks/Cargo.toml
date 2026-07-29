@@ -1,0 +1,30 @@
+[package]
+name = "forge-hooks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Outbound webhook delivery for Crabforge"
+
+[lints]
+workspace = true
+
+[dependencies]
+forge-events.workspace = true
+forge-store.workspace = true
+forge-types.workspace = true
+hmac.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+assert2.workspace = true
+axum.workspace = true
+forge-testkit.workspace = true

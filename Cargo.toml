@@ -52,6 +52,7 @@ forge-bus = { path = "crates/forge-bus" }
 forge-command = { path = "crates/forge-command" }
 forge-events = { path = "crates/forge-events" }
 forge-git = { path = "crates/forge-git" }
+forge-hooks = { path = "crates/forge-hooks" }
 forge-githttp = { path = "crates/forge-githttp" }
 forge-projector = { path = "crates/forge-projector" }
 forge-render = { path = "crates/forge-render" }
@@ -80,6 +81,8 @@ getrandom = "0.4"
 refinement-types = { version = "0.3", default-features = false, features = ["std"] }
 flate2 = "1"
 hex = "0.4"
+hmac = "0.13"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "charset", "http2"] }
 # ── rendering ────────────────────────────────────────────────────────────────
 # All of these default to oniguruma, a C library. `default-features = false`
 # keeps the build pure Rust.

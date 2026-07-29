@@ -25,6 +25,7 @@ use refinement_types::{Refinement, int};
 use tokio_postgres::{Client, NoTls};
 
 mod auth;
+mod hooks;
 mod issues;
 pub mod migrate;
 mod pulls;
@@ -32,6 +33,7 @@ mod repos;
 mod users;
 
 pub use auth::{AccessToken, AuthStore, Session};
+pub use hooks::{DeliveryRecord, HookStore, WebhookRecord};
 pub use issues::{CommentRecord, Counters, IssueRecord, IssueStore};
 pub use pulls::{Mergeable, PullRecord, PullStore, ReviewRecord};
 pub use repos::{CursorStore, RepoRecord, RepoStore};
@@ -176,6 +178,10 @@ impl Store {
 
     pub fn pulls(&self) -> PullStore<'_> {
         PullStore::new(&self.client)
+    }
+
+    pub fn hooks(&self) -> HookStore<'_> {
+        HookStore::new(&self.client)
     }
 }
 

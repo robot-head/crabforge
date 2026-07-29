@@ -45,6 +45,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "pull_requests",
         sql: include_str!("../../../migrations/0003_pull_requests.sql"),
     },
+    Migration {
+        version: 4,
+        name: "webhooks",
+        sql: include_str!("../../../migrations/0004_webhooks.sql"),
+    },
 ];
 
 const LEDGER_DDL: &str = "CREATE TABLE schema_migrations (
