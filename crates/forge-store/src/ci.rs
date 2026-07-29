@@ -189,6 +189,7 @@ impl<'a> CiStore<'a> {
         // A top-1 read rather than `coalesce(max(number), 0)`: gres returns an
         // aggregate over int8 in a type tokio-postgres will not hand back as
         // i64, and the row read needs no aggregate at all.
+        // TODO(gres:aggregate-types)
         let row = self
             .client
             .query_opt(

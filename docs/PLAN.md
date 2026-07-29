@@ -223,14 +223,14 @@ Every service: `crabka_telemetry::init(OtlpConfig::from_env(...))` (tracing + OT
 
 ## Implementation steps (milestones, each demoable)
 
-- **M0 skeleton**: workspace + git deps + patch pattern, rust-toolchain, justfile, forge-testkit, `just dev-up` (broker+gres+bootstrap), ensure-topics, /healthz. *Demo: platform up from empty dir.*
-- **M1 event spine**: envelope, FencedProducer, command handler (users/repos), catalog hydration, migrations, projector, register/create-repo via API with RYW. *Demo: kill −9 server, restart, state intact from log.*
-- **M2 git read path**: FGO1 codec + chunking, `crabforge import-repo`, cache hydration, upload-pack serving. *Demo: `git clone` an imported repo; rm -rf cache; clone again.*
-- **M3 git write path**: receive-pack + quarantine + pre-receive shim + hook endpoint, quarantine harvest, UpdateRefs CAS, refs projector. *Demo: `git push`; concurrent conflicting pushes → one wins per-ref.*
-- **M4 browsing + issues**: tree/blob/commits via gix over cache, forge-render, askama pages (repo home/tree/blob/commits), auth (register/login/sessions/PATs), issues vertical (Dioxus island composer). *Demo: browse + file/close issues in the browser.*
-- **M5 pull requests**: PR open/sync (push-triggered), compare page, reviews, mergeability worker, merge via command path, PR detail Dioxus island. *Demo: full PR lifecycle; reflog in forge.events.git-refs.*
-- **M6 webhooks + CI**: forge-webhookd (matcher/deliverer/attempts/redeliver UI), forge-cid + forge-runner (share groups + DockerSandbox), PR checks UI, log tail SSE. *Demo: push → webhook + CI run with live logs → check on PR.*
-- **M7 o11y + hardening**: telemetry init everywhere + trace propagation, o11y compose profile + forge dashboards, chunk-path load tests (≫8 MiB blobs), many-repo topic probe, **disaster drill: delete gres tenant + all caches → full restore from the log** (the thesis proven mechanically). *Demo: one trace push→webhook in Grafana; the drill.*
+- **M0 skeleton** — *done*: workspace + git deps + patch pattern, rust-toolchain, justfile, forge-testkit, `just dev-up` (broker+gres+bootstrap), ensure-topics, /healthz. *Demo: platform up from empty dir.*
+- **M1 event spine** — *done*: envelope, FencedProducer, command handler (users/repos), catalog hydration, migrations, projector, register/create-repo via API with RYW. *Demo: kill −9 server, restart, state intact from log.*
+- **M2 git read path** — *done*: FGO1 codec + chunking, `crabforge import-repo`, cache hydration, upload-pack serving. *Demo: `git clone` an imported repo; rm -rf cache; clone again.*
+- **M3 git write path** — *done*: receive-pack + quarantine + pre-receive shim + hook endpoint, quarantine harvest, UpdateRefs CAS, refs projector. *Demo: `git push`; concurrent conflicting pushes → one wins per-ref.*
+- **M4 browsing + issues** — *done*: tree/blob/commits via gix over cache, forge-render, askama pages (repo home/tree/blob/commits), auth (register/login/sessions/PATs), issues vertical (Dioxus island composer). *Demo: browse + file/close issues in the browser.*
+- **M5 pull requests** — *done*: PR open/sync (push-triggered), compare page, reviews, mergeability worker, merge via command path, PR detail Dioxus island. *Demo: full PR lifecycle; reflog in forge.events.git-refs.*
+- **M6 webhooks + CI** — *done*: forge-webhookd (matcher/deliverer/attempts/redeliver UI), forge-cid + forge-runner (share groups + DockerSandbox), PR checks UI, log tail SSE. *Demo: push → webhook + CI run with live logs → check on PR.*
+- **M7 o11y + hardening** — *done*: telemetry init everywhere + trace propagation, o11y compose profile + forge dashboards, chunk-path load tests (≫8 MiB blobs), many-repo topic probe, **disaster drill: delete gres tenant + all caches → full restore from the log** (the thesis proven mechanically). *Demo: one trace push→webhook in Grafana; the drill.*
 - **M8 (phase 2, post-MVP)**: k8s via crabka operator CRDs, KEDA prometheus scaler on `forge_ci_jobs_queued` (minReplica 0), pod-per-job sandbox, Knative eventing-kafka-broker validation against crabka, gres-activator scale-to-zero, upstream contributions 1–4.
 
 ## Verification
