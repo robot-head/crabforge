@@ -111,3 +111,8 @@ Three layers beyond the compiler: units carried in the type (`uom`), refinement
 types that make out-of-range values unconstructible (`refinement-types`), and
 integration tests against a real broker, a real gres, and the real `git` binary.
 See [docs/verification.md](docs/verification.md).
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE). The same license as
+[crabka](https://github.com/robot-head/crabka), which this is built on.
