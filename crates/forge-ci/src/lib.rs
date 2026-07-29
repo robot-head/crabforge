@@ -13,15 +13,21 @@
 //! * [`sandbox`] — where a job's steps actually execute.
 
 pub mod discover;
+pub mod docker;
+pub mod orchestrate;
 pub mod plan;
 pub mod queue;
 pub mod runner;
 pub mod sandbox;
+pub mod service;
 pub mod workflow;
 
 pub use discover::{Discovered, Found, WORKFLOW_DIR, discover};
+pub use docker::{DockerSandbox, DockerSandboxes, docker_available};
+pub use orchestrate::{OrchestrateError, Orchestrator};
 pub use plan::{PlannedJob, PlannedRun, plan_push};
-pub use queue::{Disposition, QueuedJob};
+pub use queue::{Disposition, JobQueue, Lease, QueueError, QueuedJob, RUNNER_GROUP};
 pub use runner::{JobOutcome, LogSink, run_job};
 pub use sandbox::{ProcessSandbox, Sandbox, StepOutcome, StepResult};
+pub use service::{RunnerService, SandboxFactory, ServiceError};
 pub use workflow::{Job, Step, Trigger, Workflow, WorkflowError};

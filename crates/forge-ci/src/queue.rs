@@ -1,25 +1,46 @@
 //! Handing a job to a runner.
 //!
-//! Behind a trait, because there are two ways to do this on crabka and the
-//! right one is not yet settled.
+//! Share groups (KIP-932). Several runners pull from one queue, each job goes
+//! to exactly one of them, and anything a runner drops is redelivered. That is
+//! the shape a work queue wants and the reason this is not an ordinary consumer
+//! group: consumer groups partition *ownership*, so adding a runner would only
+//! help if there were a spare partition, and a slow job would block every other
+//! job that hashed to the same one.
 //!
-//! Share groups (KIP-932) are the shape this wants: several runners pulling
-//! from one queue, each message going to exactly one of them, with per-message
-//! acknowledgement and redelivery of anything a runner dropped. Crabka
-//! implements them, but they must be enabled at *format* time
-//! (`--feature share.version=1`) — a broker formatted without it cannot be
-//! reconfigured, only reformatted. That makes them a deployment prerequisite
-//! rather than something a runner can assume.
+//! One deployment prerequisite comes with it. Share groups must be enabled at
+//! broker *format* time — `crabka format --feature share.version=1` — and a
+//! broker formatted without it cannot be reconfigured, only reformatted. The
+//! dev-loop recipe passes the flag and `TestBroker` enables it, but a
+//! hand-formatted broker will refuse to serve the queue, which is what
+//! [`QueueError::Unsupported`] is for: a clear message beats a runner that
+//! silently never receives work.
 //!
-//! So the queue is a trait with a partition-per-runner implementation that
-//! works on any broker, and share groups become a second implementation once
-//! the feature can be relied on. The trait is what keeps that from being a
-//! rewrite: a runner asks for the next job and says how it went, and neither of
-//! those changes.
+//! Delivery is at-least-once by construction — a runner that dies mid-job has
+//! its job redelivered — so nothing here tries to be exactly-once. The
+//! compare-and-swap in `CiStore::claim_job` is what makes that safe.
 
+use std::time::Duration;
+
+use crabka_client_consumer::{
+    ConsumerError, ShareAckMode, ShareAckType, ShareConsumer, ShareConsumerRecord,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::plan::PlannedJob;
+
+/// The share group every runner joins.
+pub const RUNNER_GROUP: &str = "forge.ci.runners";
+
+#[derive(Debug, thiserror::Error)]
+pub enum QueueError {
+    #[error("the job queue is unavailable: {0}")]
+    Consumer(#[from] ConsumerError),
+    #[error(
+        "this broker does not serve share groups; it must be formatted with \
+         `--feature share.version=1` (a reformat, not a config change)"
+    )]
+    Unsupported,
+}
 
 /// A job as it travels to a runner.
 ///
@@ -39,9 +60,105 @@ pub struct QueuedJob {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Disposition {
     /// Ran it, for whatever outcome. Do not deliver it again.
+    ///
+    /// "Whatever outcome" includes a failed build: the job was executed and its
+    /// verdict recorded, so redelivering would run someone's tests twice and
+    /// overwrite the first answer.
     Done,
     /// Could not take it. Give it to someone else.
     Release,
+    /// Will never be runnable. Do not deliver it to anyone.
+    ///
+    /// For a record that cannot even be decoded — redelivering it forever would
+    /// wedge the queue behind one bad message.
+    Reject,
+}
+
+/// A job handed to this runner, and the right to acknowledge it.
+pub struct Lease {
+    pub job: QueuedJob,
+    /// How many times this job has been delivered, share-group counted. The
+    /// first delivery is 1, which is what a job's `attempt` is set from.
+    pub delivery: i64,
+    record: ShareConsumerRecord,
+}
+
+impl Lease {
+    pub fn attempt(&self) -> i64 {
+        self.delivery
+    }
+}
+
+/// Runners' view of the queue.
+pub struct JobQueue {
+    consumer: ShareConsumer,
+}
+
+impl JobQueue {
+    /// Join the runner share group.
+    pub async fn open(bootstrap: &str) -> Result<Self, QueueError> {
+        let consumer = ShareConsumer::builder()
+            .bootstrap(bootstrap)
+            .group_id(RUNNER_GROUP)
+            .subscribe([forge_types::topics::CI_JOBS.to_string()])
+            // Explicit, so an un-acknowledged job returns to the queue rather
+            // than being accepted by the next poll. A runner that crashes
+            // mid-job must not have that job counted as done.
+            .ack_mode(ShareAckMode::Explicit)
+            .build()
+            .await?;
+        Ok(Self { consumer })
+    }
+
+    /// Wait for a job, or `None` if none arrived.
+    ///
+    /// A record that will not decode is rejected rather than released: it can
+    /// never become runnable, and releasing it would put it at the head of the
+    /// queue forever.
+    pub async fn next(&mut self, wait: Duration) -> Result<Option<Lease>, QueueError> {
+        let records = self.consumer.poll(wait).await?;
+        for record in records {
+            let decoded = record
+                .value
+                .as_deref()
+                .and_then(|bytes| serde_json::from_slice::<QueuedJob>(bytes).ok());
+            match decoded {
+                Some(job) => {
+                    let delivery = i64::from(record.delivery_count.max(1));
+                    return Ok(Some(Lease {
+                        job,
+                        delivery,
+                        record,
+                    }));
+                }
+                None => {
+                    tracing::warn!(
+                        offset = record.offset,
+                        "rejecting a job record that cannot be decoded"
+                    );
+                    self.consumer.acknowledge(&record, ShareAckType::Reject)?;
+                }
+            }
+        }
+        self.consumer.commit().await?;
+        Ok(None)
+    }
+
+    /// Say how a leased job went.
+    pub async fn settle(
+        &mut self,
+        lease: Lease,
+        disposition: Disposition,
+    ) -> Result<(), QueueError> {
+        let ack = match disposition {
+            Disposition::Done => ShareAckType::Accept,
+            Disposition::Release => ShareAckType::Release,
+            Disposition::Reject => ShareAckType::Reject,
+        };
+        self.consumer.acknowledge(&lease.record, ack)?;
+        self.consumer.commit().await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

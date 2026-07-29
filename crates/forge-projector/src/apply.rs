@@ -571,12 +571,13 @@ pub async fn apply_ci_event(
 
         CiEvent::JobFinished {
             job_id,
+            run_id,
             attempt,
             conclusion,
             exit_code,
             ..
         } => {
-            store
+            let applied = store
                 .ci()
                 .finish_job(
                     &job_id.to_string(),
@@ -586,6 +587,29 @@ pub async fn apply_ci_event(
                     at,
                 )
                 .await?;
+            if !applied {
+                // A stale attempt reporting on a job someone else now owns.
+                return Ok(());
+            }
+
+            // A run is over when its last job is, and its conclusion is a pure
+            // function of theirs — so it is derived here rather than announced
+            // by a runner. A runner cannot know: it has only just written its
+            // own result to the log, which this projector has not applied yet,
+            // so every runner would see its own job as still running and no
+            // run would ever finish.
+            let run_id = run_id.to_string();
+            if let Some(conclusion) = run_conclusion(store, &run_id).await? {
+                let Some(mut run) = store.ci().run_by_id(&run_id).await? else {
+                    return Ok(());
+                };
+                if !run.is_finished() {
+                    run.status = conclusion.as_str().to_string();
+                    run.updated_at = at;
+                    run.finished_at = Some(at);
+                    store.ci().upsert_run(&run).await?;
+                }
+            }
             Ok(())
         }
 

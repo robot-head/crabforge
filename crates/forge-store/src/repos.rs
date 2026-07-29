@@ -156,6 +156,9 @@ pub const WEBHOOK_MATCHER: &str = "webhook-matcher";
 /// The reader that owns the webhook delivery worker's cursor.
 pub const WEBHOOK_WORKER: &str = "webhook-worker";
 
+/// The reader that owns the CI orchestrator's cursor.
+pub const CI_ORCHESTRATOR: &str = "ci-orchestrator";
+
 /// A reader's durable cursor.
 ///
 /// The projector reads and writes its cursor inside the same transaction as the

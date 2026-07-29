@@ -54,7 +54,10 @@ impl JobOutcome {
 ///
 /// A trait rather than a channel so a test can collect lines in a `Vec` and a
 /// deployment can chunk them onto a topic, without the runner knowing which.
-pub trait LogSink {
+///
+/// `Send` because the sandbox callback that feeds it is, which in turn is
+/// because a runner is spawned onto the executor.
+pub trait LogSink: Send {
     fn line(&mut self, line: &str);
 }
 
@@ -192,7 +195,7 @@ mod tests {
             _command: &str,
             _env: &BTreeMap<String, String>,
             _timeout: Duration,
-            _on_line: &mut dyn FnMut(&str),
+            _on_line: &mut (dyn FnMut(&str) + Send),
         ) -> StepResult {
             StepResult::infra("no such image: rust:9.99")
         }

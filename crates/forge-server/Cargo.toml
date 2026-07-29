@@ -23,6 +23,7 @@ clap.workspace = true
 crabka-client-admin.workspace = true
 forge-bus.workspace = true
 forge-command.workspace = true
+forge-ci.workspace = true
 forge-git.workspace = true
 forge-hooks.workspace = true
 forge-githttp.workspace = true

@@ -28,7 +28,10 @@ enum StreamOf {
 }
 
 /// Forward every line of `stream` into `tx` until it ends.
-async fn pump_lines<R: AsyncRead + Unpin>(stream: R, tx: tokio::sync::mpsc::Sender<String>) {
+pub(crate) async fn pump_lines<R: AsyncRead + Unpin>(
+    stream: R,
+    tx: tokio::sync::mpsc::Sender<String>,
+) {
     let mut lines = BufReader::new(stream).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         if tx.send(line).await.is_err() {
@@ -107,6 +110,9 @@ impl StepResult {
 /// `on_line` is called for every line of output as it arrives. Taking a
 /// callback rather than returning the output keeps a hung job's partial log
 /// visible, which is when a log is most wanted.
+///
+/// The callback is `Send` because a runner is spawned onto the executor, and a
+/// future holding a non-`Send` reference across an await cannot be.
 #[allow(async_fn_in_trait)]
 pub trait Sandbox {
     /// Run one shell command, streaming its output.
@@ -115,7 +121,7 @@ pub trait Sandbox {
         command: &str,
         env: &BTreeMap<String, String>,
         timeout: Duration,
-        on_line: &mut dyn FnMut(&str),
+        on_line: &mut (dyn FnMut(&str) + Send),
     ) -> StepResult;
 }
 
@@ -145,7 +151,7 @@ impl Sandbox for ProcessSandbox {
         command: &str,
         env: &BTreeMap<String, String>,
         timeout: Duration,
-        on_line: &mut dyn FnMut(&str),
+        on_line: &mut (dyn FnMut(&str) + Send),
     ) -> StepResult {
         let mut child = match tokio::process::Command::new("/bin/sh")
             .arg("-c")

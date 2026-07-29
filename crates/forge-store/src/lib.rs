@@ -49,7 +49,9 @@ pub use ci::{CiStore, JobRecord, RunRecord};
 pub use hooks::{DeliveryRecord, HookStore, WebhookRecord};
 pub use issues::{CommentRecord, Counters, IssueRecord, IssueStore};
 pub use pulls::{MergeCheck, Mergeable, PullRecord, PullStore, ReviewRecord};
-pub use repos::{CursorStore, PROJECTOR, RepoRecord, RepoStore, WEBHOOK_MATCHER, WEBHOOK_WORKER};
+pub use repos::{
+    CI_ORCHESTRATOR, CursorStore, PROJECTOR, RepoRecord, RepoStore, WEBHOOK_MATCHER, WEBHOOK_WORKER,
+};
 pub use users::{UserRecord, UserStore};
 
 /// Largest page any listing will return.

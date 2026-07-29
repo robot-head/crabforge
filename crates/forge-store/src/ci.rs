@@ -177,6 +177,28 @@ impl<'a> CiStore<'a> {
         Ok(updated > 0)
     }
 
+    /// The next run number for a repository.
+    ///
+    /// Derived from the highest already stored rather than from a counter row.
+    /// Safe because the orchestrator is the only thing that creates runs and
+    /// reads one topic in order — the same single-writer argument the command
+    /// service makes for issue numbers. It is *not* safe if a second
+    /// orchestrator is ever run, which is what the `UNIQUE (repo_id, number)`
+    /// constraint is there to catch.
+    pub async fn next_run_number(&self, repo_id: &str) -> Result<i64, StoreError> {
+        // A top-1 read rather than `coalesce(max(number), 0)`: gres returns an
+        // aggregate over int8 in a type tokio-postgres will not hand back as
+        // i64, and the row read needs no aggregate at all.
+        let row = self
+            .client
+            .query_opt(
+                "SELECT number FROM ci_runs WHERE repo_id = $1 ORDER BY number DESC LIMIT 1",
+                &[&repo_id],
+            )
+            .await?;
+        Ok(row.map_or(0, |row| row.get::<_, i64>(0)) + 1)
+    }
+
     pub async fn run_by_id(&self, run_id: &str) -> Result<Option<RunRecord>, StoreError> {
         let row = self
             .client

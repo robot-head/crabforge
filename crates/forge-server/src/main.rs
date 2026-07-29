@@ -43,6 +43,13 @@ struct Args {
     #[arg(long, env = "CRABFORGE_CACHE", default_value = ".dev/git-cache")]
     cache_root: std::path::PathBuf,
 
+    /// How many CI runners to start in this process.
+    ///
+    /// Zero disables CI here without disabling it for the forge — another
+    /// process joining the same share group picks the work up.
+    #[arg(long, env = "CRABFORGE_CI_RUNNERS", default_value_t = 2)]
+    ci_runners: usize,
+
     /// Set the `Secure` flag on cookies.
     ///
     /// Off by default so the forge works over plain HTTP on a laptop. Turn it
@@ -172,6 +179,48 @@ async fn main() -> Result<()> {
         workers = forge_hooks::Worker::partitions(),
         "webhook delivery running"
     );
+
+    // Crab Actions. The orchestrator watches pushes and plans runs; the runners
+    // drain the share-group queue. Both take the webhook writer's identity —
+    // they are consequences of decisions already committed, not decisions.
+    let orchestrator = forge_ci::Orchestrator::open(
+        &args.bootstrap,
+        Store::connect(&args.dsn)
+            .await
+            .context("connecting a database session for CI orchestration")?,
+        Arc::clone(&hook_writer),
+        &args.cache_root,
+    )
+    .await
+    .context("opening the CI orchestrator")?;
+    tokio::spawn(orchestrator.run(shutdown_rx.clone()));
+
+    for worker in 0..args.ci_runners {
+        let sandboxes = forge_ci::DockerSandboxes::new(args.cache_root.join("ci"));
+        match forge_ci::RunnerService::open(
+            &args.bootstrap,
+            Store::connect(&args.dsn)
+                .await
+                .with_context(|| format!("connecting a database session for runner {worker}"))?,
+            Arc::clone(&hook_writer),
+            sandboxes,
+        )
+        .await
+        {
+            Ok(runner) => {
+                tokio::spawn(runner.run(shutdown_rx.clone()));
+            }
+            Err(e) => {
+                // Almost always a broker formatted without share groups, which
+                // is a reformat rather than a config change — so it is worth
+                // saying loudly and worth continuing without CI rather than
+                // refusing to serve git.
+                tracing::error!(error = %e, "CI runners unavailable; the forge will serve without CI");
+                break;
+            }
+        }
+    }
+    tracing::info!(runners = args.ci_runners, "Crab Actions running");
 
     // Stylesheets are embedded in the binary and served by the web router, so
     // a deployment is one file with no asset path to misconfigure.
