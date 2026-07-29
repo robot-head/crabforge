@@ -15,7 +15,7 @@ use serde::Deserialize;
 
 use crate::{
     error::{WebError, WebResult},
-    pages::{PullDetailPage, PullRow, PullsPage, ReviewView},
+    pages::{CheckJobView, CheckView, PullDetailPage, PullRow, PullsPage, ReviewView},
     routes::repo::open_repo,
     session,
     state::WebState,
@@ -147,6 +147,42 @@ pub async fn detail(
         .unwrap_or(0);
     let counters = state.store.issues().counters(&record.repo_id).await?;
 
+    // Crab Actions runs against the commit this request currently points at.
+    // Keyed by commit rather than by pull request, so a run triggered by the
+    // push shows here without CI needing to know what a pull request is.
+    let runs = state
+        .store
+        .ci()
+        .runs_for_commit(&pr.head_oid, forge_store::page_size(20))
+        .await?;
+    let mut checks = Vec::new();
+    for run in &runs {
+        let jobs = state.store.ci().jobs_of(&run.run_id).await?;
+        checks.push(CheckView {
+            name: run
+                .workflow
+                .rsplit('/')
+                .next()
+                .unwrap_or(&run.workflow)
+                .to_string(),
+            status: run.status.clone(),
+            status_class: check_class(&run.status),
+            number: run.number,
+            jobs: jobs
+                .iter()
+                .map(|job| CheckJobView {
+                    name: job.name.clone(),
+                    status: job.status.clone(),
+                    status_class: check_class(&job.status),
+                })
+                .collect(),
+        });
+    }
+    // Green only when everything has finished and everything passed. A run
+    // still going is not a pass — showing one as green would put a merge button
+    // in front of somebody before the tests had said anything.
+    let checks_passed = runs.iter().all(|run| run.status == "success");
+
     let mergeability = pr.mergeability();
     Ok(PullDetailPage {
         csrf: session::csrf_token(&state, viewer.as_ref()),
@@ -193,6 +229,8 @@ pub async fn detail(
         merged_by: pr.merged_by_name.clone(),
         commit_count,
         reviews,
+        checks,
+        checks_passed,
         diff,
     }
     .into_response())
@@ -345,4 +383,20 @@ fn parse_repo(id: &str) -> WebResult<RepoId> {
 fn parse_oid(text: &str) -> WebResult<Oid> {
     text.parse()
         .map_err(|_| WebError::Internal("stored object id is malformed".into()))
+}
+
+/// The CSS class for a run or job status.
+///
+/// Mapped here rather than in the template so an unrecognised status — one a
+/// newer build writes — renders as neutral rather than as success.
+fn check_class(status: &str) -> String {
+    match status {
+        "success" => "success",
+        "failed" | "timed_out" => "failed",
+        "infra_failed" => "infra",
+        "running" => "running",
+        "queued" => "queued",
+        _ => "unknown",
+    }
+    .to_string()
 }

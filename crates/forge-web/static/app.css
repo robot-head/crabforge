@@ -96,3 +96,29 @@ button.secondary { background: var(--surface); color: var(--fg); border-color: v
 .chip.request_changes { background: var(--closed); color: #fff; border-color: transparent; }
 ul.conflicts { margin: .5rem 0; }
 .muted { color: var(--muted); }
+
+/* ── Crab Actions checks on a pull request ────────────────────────────────── */
+
+.checks { margin: 1.5rem 0; }
+.check-list, .check-jobs { list-style: none; margin: 0; padding: 0; }
+.check {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.5rem;
+}
+.check-name { font-weight: 600; }
+.check-status, .job-status { color: var(--muted); font-size: 0.9em; margin-left: 0.5rem; }
+.check-jobs { margin-top: 0.4rem; padding-left: 0.8rem; }
+.check-job { padding: 0.15rem 0; font-size: 0.95em; }
+
+/* Status is carried by a border and a label, never by colour alone — a
+   red/green-only signal is invisible to a good fraction of readers. */
+.check.success, .check-job.success { border-left-color: var(--ok, #1a7f37); }
+.check.failed, .check-job.failed { border-left-color: var(--bad, #cf222e); }
+.check.infra, .check-job.infra { border-left-color: var(--warn, #9a6700); }
+.check.running, .check-job.running { border-left-color: var(--accent, #0969da); }
+.check.queued, .check.unknown { border-left-color: var(--border); }
+
+.checks-note { color: var(--muted); font-size: 0.9em; margin: 0.4rem 0 0; }

@@ -885,3 +885,87 @@ async fn a_signed_out_visitor_sees_no_merge_button() {
     check!(!body.contains("Merge pull request</button>"));
     check!(body.contains("can be merged"), "but it says so");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pull_request_shows_its_crab_actions_checks() {
+    // The checks list is keyed by the head commit rather than by the pull
+    // request, so a run triggered by the push appears here without CI needing
+    // to know that pull requests exist.
+    let Some(mut site) = Site::start().await else {
+        return;
+    };
+    site.sign_up("octocat").await;
+    site.seed_repo("octocat", "hello", &[("f.txt", b"one\ntwo\nthree\n")])
+        .await;
+    site.add_branch("octocat", "hello", "feature", b"ONE\ntwo\nthree\n")
+        .await;
+    let number = site.open_pull("octocat", "hello", "feature").await;
+
+    let record = site
+        .store
+        .repos()
+        .by_full_name("octocat/hello")
+        .await
+        .unwrap()
+        .unwrap();
+    let pr = site
+        .store
+        .pulls()
+        .by_number(&record.repo_id, number)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let now = forge_types::now();
+    let run_id = forge_types::RunId::new().to_string();
+    site.store
+        .ci()
+        .upsert_run(&forge_store::RunRecord {
+            run_id: run_id.clone(),
+            repo_id: record.repo_id.clone(),
+            number: 1,
+            workflow: ".crabforge/workflows/build.yml".into(),
+            event: "push".into(),
+            head_oid: pr.head_oid.clone(),
+            ref_name: "refs/heads/feature".into(),
+            actor_name: "octocat".into(),
+            status: "running".into(),
+            created_at: now,
+            updated_at: now,
+            started_at: Some(now),
+            finished_at: None,
+        })
+        .await
+        .unwrap();
+    site.store
+        .ci()
+        .upsert_job(&forge_store::JobRecord {
+            job_id: forge_types::JobId::new().to_string(),
+            run_id,
+            repo_id: record.repo_id.clone(),
+            name: "unit-tests".into(),
+            image: "ubuntu:24.04".into(),
+            status: "running".into(),
+            attempt: 1,
+            exit_code: None,
+            log_offset: None,
+            created_at: now,
+            updated_at: now,
+            started_at: Some(now),
+            finished_at: None,
+        })
+        .await
+        .unwrap();
+
+    let (status, body) = site.get(&format!("/octocat/hello/pulls/{number}")).await;
+    check!(status == StatusCode::OK);
+    check!(body.contains("Checks"), "no checks section");
+    check!(body.contains("build.yml"), "the workflow is not named");
+    check!(body.contains("unit-tests"), "the job is not listed");
+    // A run that has not finished must not read as passing — showing green
+    // would put a merge button in front of somebody before the tests spoke.
+    check!(
+        body.contains("Some checks have not passed yet"),
+        "a running check was presented as passed"
+    );
+}

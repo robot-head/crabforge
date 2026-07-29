@@ -249,9 +249,31 @@ pub struct PullDetailPage {
     pub merged_by: Option<String>,
     pub commit_count: i64,
     pub reviews: Vec<ReviewView>,
+    /// Crab Actions runs for this pull request's head commit.
+    pub checks: Vec<CheckView>,
+    /// Whether every check that ran passed. False while any is still running,
+    /// so a merge box cannot show green on an unfinished build.
+    pub checks_passed: bool,
     /// git's own diff output. Escaped by askama, deliberately.
     pub diff: String,
     pub can_write: bool,
+}
+
+/// One CI run against a pull request's head commit.
+pub struct CheckView {
+    pub name: String,
+    pub status: String,
+    /// A CSS class, so the template does not branch on status text.
+    pub status_class: String,
+    pub number: i64,
+    pub jobs: Vec<CheckJobView>,
+}
+
+/// One job of a checked run.
+pub struct CheckJobView {
+    pub name: String,
+    pub status: String,
+    pub status_class: String,
 }
 
 /// One repository on a profile.
