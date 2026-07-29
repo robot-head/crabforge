@@ -1,0 +1,27 @@
+[package]
+name = "forge-ci"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Crab Actions: workflow definitions, planning, and execution"
+
+[lints]
+workspace = true
+
+[dependencies]
+forge-git.workspace = true
+forge-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+assert2.workspace = true
+forge-types.workspace = true
+tempfile.workspace = true

@@ -49,6 +49,7 @@ crabka-broker = { git = "https://github.com/robot-head/crabka", branch = "main" 
 # ── forge crates ─────────────────────────────────────────────────────────────
 forge-auth = { path = "crates/forge-auth" }
 forge-bus = { path = "crates/forge-bus" }
+forge-ci = { path = "crates/forge-ci" }
 forge-command = { path = "crates/forge-command" }
 forge-events = { path = "crates/forge-events" }
 forge-git = { path = "crates/forge-git" }
@@ -94,6 +95,7 @@ syntect = { version = "5.3", default-features = false, features = ["default-fanc
 two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 sha2 = "0.11"
 tempfile = "3"
 # ── templating ───────────────────────────────────────────────────────────────

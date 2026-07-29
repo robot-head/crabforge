@@ -267,6 +267,71 @@ CREATE TABLE pr_reviews (
 CREATE INDEX pr_reviews_by_pr ON pr_reviews (pr_id);
 
 
+
+-- ── Crab Actions ────────────────────────────────────────────────────────────
+--
+-- A push discovers workflows at the commit that was pushed, not at the branch
+-- tip: the two differ the moment a second push lands while the first is still
+-- being planned, and running someone else's workflow against your commit is
+-- both wrong and a way to get code executed that was never reviewed.
+
+-- Projected. One workflow triggered once.
+CREATE TABLE ci_runs (
+  run_id       text PRIMARY KEY,
+  repo_id      text NOT NULL,
+  -- Per repository, allocated by the command service like an issue number.
+  number       int8 NOT NULL,
+  -- The workflow file this came from, repo-relative.
+  workflow     text NOT NULL,
+  -- What set it off: 'push' for now.
+  event        text NOT NULL,
+  -- The commit the workflow was read at and jobs run against.
+  head_oid     text NOT NULL,
+  -- Fully qualified, e.g. `refs/heads/main`. Not `ref`: short, unquoted and
+  -- a reserved word in enough dialects to be worth avoiding.
+  ref_name     text NOT NULL,
+  actor_name   text NOT NULL,
+  -- 'queued' | 'running' | 'success' | 'failed' | 'cancelled'
+  status       text NOT NULL,
+  created_at   timestamptz NOT NULL,
+  updated_at   timestamptz NOT NULL,
+  started_at   timestamptz,
+  finished_at  timestamptz,
+  UNIQUE (repo_id, number)
+);
+CREATE INDEX ci_runs_by_repo ON ci_runs (repo_id);
+CREATE INDEX ci_runs_by_head ON ci_runs (head_oid);
+
+-- Projected. One job of one run.
+CREATE TABLE ci_jobs (
+  job_id       text PRIMARY KEY,
+  run_id       text NOT NULL,
+  repo_id      text NOT NULL,
+  -- The key from the workflow's `jobs:` map.
+  name         text NOT NULL,
+  -- The image to run in, from `runs-on`.
+  image        text NOT NULL,
+  -- 'queued' | 'running' | 'success' | 'failed' | 'cancelled' | 'infra_failed'
+  status       text NOT NULL,
+  -- Which delivery of this job is running. Consumption is at-least-once, so a
+  -- runner that dies mid-job has its work redelivered; the attempt number is
+  -- what lets a second runner tell "nobody started this" from "someone did and
+  -- stopped", and what a compare-and-swap on starting is written against.
+  attempt      int8 NOT NULL,
+  exit_code    int8,
+  -- Where this job's log chunks begin on the log topic, so the UI can tail
+  -- from the right place instead of scanning from zero.
+  log_offset   int8,
+  created_at   timestamptz NOT NULL,
+  updated_at   timestamptz NOT NULL,
+  started_at   timestamptz,
+  finished_at  timestamptz,
+  UNIQUE (run_id, name)
+);
+CREATE INDEX ci_jobs_by_run ON ci_jobs (run_id);
+CREATE INDEX ci_jobs_by_repo ON ci_jobs (repo_id);
+
+
 -- ── Webhooks ────────────────────────────────────────────────────────────────
 --
 -- A webhook's *configuration* is domain history: someone decided this project
