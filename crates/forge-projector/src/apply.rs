@@ -336,7 +336,7 @@ pub async fn apply_pr_event(
                     head_oid: head_oid.to_hex(),
                     base_oid: base_oid.to_hex(),
                     // Nothing has tried to merge it yet. The worker will.
-                    mergeable: "unknown".to_string(),
+                    merge_check: None,
                     merge_commit_oid: None,
                     merged_by_name: None,
                     comment_count: 0,
@@ -357,10 +357,9 @@ pub async fn apply_pr_event(
             update_pull(store, &pr_id.to_string(), at, |pr| {
                 pr.head_oid = head_oid.to_hex();
                 pr.base_oid = base_oid.to_hex();
-                // The commits moved, so whatever the last trial merge concluded
-                // was about a different pair. Saying "unknown" is honest and
-                // disables the merge button until it is recomputed.
-                pr.mergeable = "unknown".to_string();
+                // The last trial merge is left in place, not cleared. It names
+                // the commits it was run on, so once these move it stops
+                // counting on its own — and a reader cannot forget to check.
             })
             .await
         }
@@ -375,26 +374,20 @@ pub async fn apply_pr_event(
         } => {
             let pr_id = pr_id.to_string();
             let (head, base) = (head_oid.to_hex(), base_oid.to_hex());
-
-            // Only apply if the pull request still points at the commits this
-            // was computed for. A result that arrives after another push is
-            // about history that has moved on.
-            let Some(current) = store.pulls().by_id(&pr_id).await? else {
-                return Ok(());
+            let check = if *mergeable {
+                forge_store::MergeCheck::clean(head, base)
+            } else {
+                forge_store::MergeCheck::conflict(head, base, conflicts.clone())
             };
-            if current.head_oid != head || current.base_oid != base {
-                tracing::debug!(%pr_id, "discarding a mergeability result for older commits");
-                return Ok(());
-            }
 
-            store
-                .pulls()
-                .set_conflicts(&pr_id, &head, &base, conflicts)
-                .await?;
-            update_pull(store, &pr_id, at, |pr| {
-                pr.mergeable = if *mergeable { "clean" } else { "conflict" }.to_string();
-            })
-            .await
+            // The store applies this only while the request still points at the
+            // commits it was computed for: a result that arrives after another
+            // push is about history that has moved on, and overwriting a
+            // current answer with it would blank the merge button for nothing.
+            if !store.pulls().record_check(&pr_id, &check, at).await? {
+                tracing::debug!(%pr_id, "discarding a mergeability result for older commits");
+            }
+            Ok(())
         }
 
         PrEvent::Reviewed {
@@ -454,9 +447,11 @@ pub async fn apply_pr_event(
                 if pr.state != "merged" {
                     pr.state = "open".to_string();
                     pr.closed_at = None;
-                    // Its mergeability was computed before it was closed and
-                    // the base has probably moved since.
-                    pr.mergeable = "unknown".to_string();
+                    // Dropped rather than left to age out: the commits have not
+                    // moved, so the old check would still look current, and it
+                    // was computed against a base that has had time to change
+                    // without anyone telling this pull request about it.
+                    pr.merge_check = None;
                 }
             })
             .await

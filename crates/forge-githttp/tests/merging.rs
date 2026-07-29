@@ -299,13 +299,7 @@ async fn a_conflicting_pull_request_is_refused_and_names_the_files() {
 
     // The conflicting paths are recorded against the commits they were computed
     // for, so the page can show them.
-    let conflicts = h
-        .store
-        .pulls()
-        .conflicts(&record.pr_id, &record.head_oid, &record.base_oid)
-        .await
-        .unwrap();
-    check!(conflicts == ["f.txt"]);
+    check!(record.conflicts() == ["f.txt"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -17,12 +17,11 @@
 -- The cookie itself is never stored. What is stored is its SHA-256, so a
 -- database leak does not hand out live sessions.
 CREATE TABLE web_sessions (
-  session_hash text NOT NULL,
+  session_hash text PRIMARY KEY,
   user_id      text NOT NULL,
   created_at   timestamptz NOT NULL,
   expires_at   timestamptz NOT NULL
 );
-CREATE INDEX web_sessions_by_hash ON web_sessions (session_hash);
 CREATE INDEX web_sessions_by_user ON web_sessions (user_id);
 
 -- Projected: personal access tokens, for git over HTTP and the API.
@@ -32,27 +31,28 @@ CREATE INDEX web_sessions_by_user ON web_sessions (user_id);
 -- but `last_used_at` is written directly, because recording every use as an
 -- event would put a write on the log for every git fetch.
 CREATE TABLE access_tokens (
-  token_id     text NOT NULL,
+  token_id     text PRIMARY KEY,
   user_id      text NOT NULL,
   name         text NOT NULL,
-  token_hash   text NOT NULL,
-  scopes       text NOT NULL,          -- space-separated
+  -- Unique because two rows sharing a hash would mean one presented token
+  -- authenticating as whichever account a query happened to read first.
+  token_hash   text NOT NULL UNIQUE,
+  scopes       text[] NOT NULL,
   created_at   timestamptz NOT NULL,
   expires_at   timestamptz,
   revoked_at   timestamptz,
   last_used_at timestamptz
 );
-CREATE INDEX access_tokens_by_hash ON access_tokens (token_hash);
 CREATE INDEX access_tokens_by_user ON access_tokens (user_id);
-CREATE INDEX access_tokens_by_id ON access_tokens (token_id);
 
 -- Projected: issues.
 --
 -- `number` is per repository and allocated by the command service, which is the
 -- only writer and therefore the only thing that can hand out a sequence without
--- a gap or a duplicate.
+-- a gap or a duplicate. Declaring it unique means a bug there surfaces as a
+-- rejected write rather than as two issues both answering to `#7`.
 CREATE TABLE issues (
-  issue_id      text NOT NULL,
+  issue_id      text PRIMARY KEY,
   repo_id       text NOT NULL,
   number        int8 NOT NULL,
   title         text NOT NULL,
@@ -63,17 +63,17 @@ CREATE TABLE issues (
   comment_count int8 NOT NULL,
   created_at    timestamptz NOT NULL,
   updated_at    timestamptz NOT NULL,
-  closed_at     timestamptz
+  closed_at     timestamptz,
+  UNIQUE (repo_id, number)
 );
 CREATE INDEX issues_by_repo ON issues (repo_id);
-CREATE INDEX issues_by_id ON issues (issue_id);
 
 -- Projected: comments on issues.
 --
 -- Ordered by `comment_id`, which is a UUIDv7 and therefore chronological. That
 -- is what lets a conversation page be keyset-paginated without a sort column.
 CREATE TABLE issue_comments (
-  comment_id  text NOT NULL,
+  comment_id  text PRIMARY KEY,
   issue_id    text NOT NULL,
   repo_id     text NOT NULL,
   author_id   text NOT NULL,
@@ -87,11 +87,11 @@ CREATE INDEX issue_comments_by_issue ON issue_comments (issue_id);
 -- Projected: per-repository counters.
 --
 -- Maintained as columns because `count(*) WHERE state = 'open'` runs on every
--- page that shows a tab badge, and gres has no composite index to make it cheap.
+-- page that shows a tab badge, and a gres index scan is single-column equality
+-- only — the state predicate would be a filter over every issue in the repo.
 -- TODO(gres:composite-index)
 CREATE TABLE repo_counters (
-  repo_id       text NOT NULL,
+  repo_id       text PRIMARY KEY,
   open_issues   int8 NOT NULL,
   closed_issues int8 NOT NULL
 );
-CREATE INDEX repo_counters_by_repo ON repo_counters (repo_id);

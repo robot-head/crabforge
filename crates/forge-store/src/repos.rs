@@ -29,58 +29,34 @@ impl<'a> RepoStore<'a> {
         Self { client }
     }
 
-    /// TODO(gres:on-conflict) — see `UserStore::upsert`.
+    /// See `UserStore::upsert` for why `created_at` is not updated.
     pub async fn upsert(&self, repo: &RepoRecord) -> Result<(), StoreError> {
-        let existing = self
-            .client
-            .query_opt(
-                "SELECT repo_id FROM repos WHERE repo_id = $1",
-                &[&repo.repo_id],
+        self.client
+            .execute(
+                "INSERT INTO repos (repo_id, owner_id, owner_name, name, full_name_lower, \
+                 description, default_branch, visibility, created_at, updated_at, deleted) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+                 ON CONFLICT (repo_id) DO UPDATE SET \
+                 owner_id = excluded.owner_id, owner_name = excluded.owner_name, \
+                 name = excluded.name, full_name_lower = excluded.full_name_lower, \
+                 description = excluded.description, default_branch = excluded.default_branch, \
+                 visibility = excluded.visibility, updated_at = excluded.updated_at, \
+                 deleted = excluded.deleted",
+                &[
+                    &repo.repo_id,
+                    &repo.owner_id,
+                    &repo.owner_name,
+                    &repo.name,
+                    &repo.full_name_lower,
+                    &repo.description,
+                    &repo.default_branch,
+                    &repo.visibility,
+                    &repo.created_at,
+                    &repo.updated_at,
+                    &repo.deleted,
+                ],
             )
             .await?;
-
-        if existing.is_some() {
-            self.client
-                .execute(
-                    "UPDATE repos SET owner_id = $2, owner_name = $3, name = $4, \
-                     full_name_lower = $5, description = $6, default_branch = $7, \
-                     visibility = $8, updated_at = $9, deleted = $10 WHERE repo_id = $1",
-                    &[
-                        &repo.repo_id,
-                        &repo.owner_id,
-                        &repo.owner_name,
-                        &repo.name,
-                        &repo.full_name_lower,
-                        &repo.description,
-                        &repo.default_branch,
-                        &repo.visibility,
-                        &repo.updated_at,
-                        &repo.deleted,
-                    ],
-                )
-                .await?;
-        } else {
-            self.client
-                .execute(
-                    "INSERT INTO repos (repo_id, owner_id, owner_name, name, full_name_lower, \
-                     description, default_branch, visibility, created_at, updated_at, deleted) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
-                    &[
-                        &repo.repo_id,
-                        &repo.owner_id,
-                        &repo.owner_name,
-                        &repo.name,
-                        &repo.full_name_lower,
-                        &repo.description,
-                        &repo.default_branch,
-                        &repo.visibility,
-                        &repo.created_at,
-                        &repo.updated_at,
-                        &repo.deleted,
-                    ],
-                )
-                .await?;
-        }
         Ok(())
     }
 
@@ -93,7 +69,7 @@ impl<'a> RepoStore<'a> {
     }
 
     /// Resolve `owner/name`. The caller passes the pre-lowered form, which is
-    /// what `repos_by_full_name_lower` indexes.
+    /// what the `full_name_lower` unique index holds.
     pub async fn by_full_name(
         &self,
         full_name_lower: &str,
@@ -198,24 +174,19 @@ impl<'a> CursorStore<'a> {
     }
 
     /// Record progress. Must run inside the caller's transaction.
-    /// TODO(gres:on-conflict)
+    ///
+    /// One statement, so the cursor cannot be left behind by a crash between an
+    /// update that matched nothing and the insert that would have created it.
     pub async fn set_applied_offset(&self, topic: &str, offset: i64) -> Result<(), StoreError> {
-        let updated = self
-            .client
+        self.client
             .execute(
-                "UPDATE projector_state SET applied_offset = $2, updated_at = $3 WHERE topic = $1",
+                "INSERT INTO projector_state (topic, partition, applied_offset, updated_at) \
+                 VALUES ($1, 0, $2, $3) \
+                 ON CONFLICT (topic, partition) DO UPDATE SET \
+                 applied_offset = excluded.applied_offset, updated_at = excluded.updated_at",
                 &[&topic, &offset, &forge_types::now()],
             )
             .await?;
-        if updated == 0 {
-            self.client
-                .execute(
-                    "INSERT INTO projector_state (topic, partition, applied_offset, updated_at) \
-                     VALUES ($1, 0, $2, $3)",
-                    &[&topic, &offset, &forge_types::now()],
-                )
-                .await?;
-        }
         Ok(())
     }
 }

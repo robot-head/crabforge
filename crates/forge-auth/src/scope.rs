@@ -97,22 +97,25 @@ impl Scopes {
         Self(scopes)
     }
 
-    /// Parse the stored space-separated form.
+    /// Interpret the stored form, one scope per element.
     ///
     /// Unrecognized entries are dropped rather than failing: a token issued by
     /// a newer version with a scope this one does not know should still work
     /// for the scopes it does, not stop authenticating entirely.
-    pub fn parse(stored: &str) -> Self {
-        Self::new(stored.split_whitespace().filter_map(|s| s.parse().ok()))
+    pub fn from_stored<S: AsRef<str>>(stored: &[S]) -> Self {
+        Self::new(stored.iter().filter_map(|s| s.as_ref().parse().ok()))
     }
 
     /// The stored form.
-    pub fn encode(&self) -> String {
-        self.0
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(" ")
+    pub fn to_stored(&self) -> Vec<String> {
+        self.0.iter().map(|s| s.as_str().to_string()).collect()
+    }
+
+    /// Parse a space-separated list, as a request supplies one.
+    ///
+    /// Unrecognized entries are dropped, for the same reason as above.
+    pub fn parse(requested: &str) -> Self {
+        Self::new(requested.split_whitespace().filter_map(|s| s.parse().ok()))
     }
 
     /// Whether this set grants `needed`.
@@ -138,7 +141,7 @@ mod tests {
     #[test]
     fn scopes_round_trip_through_their_stored_form() {
         let scopes = Scopes::new([Scope::RepoWrite, Scope::User]);
-        check!(Scopes::parse(&scopes.encode()) == scopes);
+        check!(Scopes::from_stored(&scopes.to_stored()) == scopes);
     }
 
     #[test]
@@ -176,17 +179,17 @@ mod tests {
     #[test]
     fn duplicates_collapse() {
         let scopes = Scopes::new([Scope::RepoRead, Scope::RepoRead]);
-        check!(scopes.encode() == "repo:read");
+        check!(scopes.to_stored() == ["repo:read"]);
     }
 
     #[test]
     fn an_unknown_scope_is_dropped_rather_than_failing_the_token() {
         // A token issued by a newer version must keep working for what this
         // version understands.
-        let scopes = Scopes::parse("repo:read repo:teleport user");
+        let scopes = Scopes::from_stored(&["repo:read", "repo:teleport", "user"]);
         check!(scopes.allows(Scope::RepoRead));
         check!(scopes.allows(Scope::User));
-        check!(scopes.encode() == "repo:read user");
+        check!(scopes.to_stored() == ["repo:read", "user"]);
     }
 
     #[test]
@@ -205,9 +208,9 @@ mod tests {
 
     #[test]
     fn the_stored_form_is_stable_regardless_of_input_order() {
-        // So a token's scope string does not churn between writes.
+        // So a token's stored scopes do not churn between writes.
         let a = Scopes::new([Scope::User, Scope::RepoRead]);
         let b = Scopes::new([Scope::RepoRead, Scope::User]);
-        check!(a.encode() == b.encode());
+        check!(a.to_stored() == b.to_stored());
     }
 }

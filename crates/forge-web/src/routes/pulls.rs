@@ -135,11 +135,9 @@ pub async fn detail(
         })
         .collect();
 
-    let conflicts = state
-        .store
-        .pulls()
-        .conflicts(&pr.pr_id, &pr.head_oid, &pr.base_oid)
-        .await?;
+    // Empty unless the stored trial merge was run on the commits this request
+    // currently points at — the record decides that, not this page.
+    let conflicts = pr.conflicts().to_vec();
     let diff = cache
         .diff_between(&pr.base_oid, &pr.head_oid)
         .unwrap_or_default();

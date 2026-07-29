@@ -860,7 +860,7 @@ dependencies = [
 [[package]]
 name = "crabka-audit"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "async-trait",
  "bytes",
@@ -881,7 +881,7 @@ dependencies = [
 [[package]]
 name = "crabka-authz"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "crabka-metadata",
@@ -892,7 +892,7 @@ dependencies = [
 [[package]]
 name = "crabka-broker"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -958,7 +958,7 @@ dependencies = [
 [[package]]
 name = "crabka-client-admin"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "async-trait",
@@ -978,7 +978,7 @@ dependencies = [
 [[package]]
 name = "crabka-client-consumer"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "bon",
@@ -996,7 +996,7 @@ dependencies = [
 [[package]]
 name = "crabka-client-core"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "async-trait",
  "bon",
@@ -1018,7 +1018,7 @@ dependencies = [
 [[package]]
 name = "crabka-client-producer"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "async-trait",
@@ -1039,7 +1039,7 @@ dependencies = [
 [[package]]
 name = "crabka-compression"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "bytes",
@@ -1053,7 +1053,7 @@ dependencies = [
 [[package]]
 name = "crabka-ids"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "derive_more",
@@ -1063,7 +1063,7 @@ dependencies = [
 [[package]]
 name = "crabka-kraft-core"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "bytes",
@@ -1076,7 +1076,7 @@ dependencies = [
 [[package]]
 name = "crabka-log"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "bytes",
@@ -1092,7 +1092,7 @@ dependencies = [
 [[package]]
 name = "crabka-logfmt"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "serde_json",
@@ -1103,7 +1103,7 @@ dependencies = [
 [[package]]
 name = "crabka-metadata"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "bytes",
@@ -1122,7 +1122,7 @@ dependencies = [
 [[package]]
 name = "crabka-object-store"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1135,7 +1135,7 @@ dependencies = [
 [[package]]
 name = "crabka-protocol"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "arbitrary",
  "assert2",
@@ -1151,7 +1151,7 @@ dependencies = [
 [[package]]
 name = "crabka-raft"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "async-trait",
@@ -1178,7 +1178,7 @@ dependencies = [
 [[package]]
 name = "crabka-records-legacy"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "bytes",
@@ -1192,7 +1192,7 @@ dependencies = [
 [[package]]
 name = "crabka-remote-storage"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "bytes",
  "crabka-ids",
@@ -1207,7 +1207,7 @@ dependencies = [
 [[package]]
 name = "crabka-remote-storage-topic"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1228,7 +1228,7 @@ dependencies = [
 [[package]]
 name = "crabka-security"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "arc-swap",
  "assert2",
@@ -1260,7 +1260,7 @@ dependencies = [
 [[package]]
 name = "crabka-telemetry"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "axum",
@@ -1282,7 +1282,7 @@ dependencies = [
 [[package]]
 name = "crabka-throttle"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "creusot-std",
@@ -1293,7 +1293,7 @@ dependencies = [
 [[package]]
 name = "crabka-verified"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "creusot-std",
@@ -1302,7 +1302,7 @@ dependencies = [
 [[package]]
 name = "crabka-voters"
 version = "0.3.9"
-source = "git+https://github.com/robot-head/crabka?branch=main#22b0f4654a120dd72268db33db824c079bdcc5fa"
+source = "git+https://github.com/robot-head/crabka?branch=main#f32bf0c411ab31373193054bc10961fae33f9e06"
 dependencies = [
  "assert2",
  "crabka-ids",
@@ -2077,6 +2077,8 @@ dependencies = [
  "forge-testkit",
  "forge-types",
  "refinement-types",
+ "serde",
+ "serde_json",
  "thiserror 2.0.19",
  "time",
  "tokio",
@@ -3845,6 +3847,8 @@ dependencies = [
  "bytes",
  "fallible-iterator",
  "postgres-protocol",
+ "serde_core",
+ "serde_json",
  "time",
  "uuid",
 ]

@@ -6,8 +6,10 @@
 //!
 //! ## Who writes what
 //!
-//! * The **projector** owns every projection table. It is the single writer, so
-//!   read-then-write is safe without `ON CONFLICT`, which gres does not have.
+//! * The **projector** owns every projection table. Applies are `INSERT …
+//!   ON CONFLICT DO UPDATE`, so replaying an event lands on the row it already
+//!   wrote rather than beside it — idempotent because the statement says so,
+//!   not because of who happens to be writing.
 //! * The **web tier** owns only session and token-usage rows: operational state
 //!   with no place in domain history.
 //!
@@ -35,7 +37,7 @@ mod users;
 pub use auth::{AccessToken, AuthStore, Session};
 pub use hooks::{DeliveryRecord, HookStore, WebhookRecord};
 pub use issues::{CommentRecord, Counters, IssueRecord, IssueStore};
-pub use pulls::{Mergeable, PullRecord, PullStore, ReviewRecord};
+pub use pulls::{MergeCheck, Mergeable, PullRecord, PullStore, ReviewRecord};
 pub use repos::{CursorStore, RepoRecord, RepoStore};
 pub use users::{UserRecord, UserStore};
 
@@ -69,6 +71,8 @@ pub fn page_size(requested: i64) -> PageSize {
 pub enum StoreError {
     #[error("sql: {0}")]
     Sql(#[from] tokio_postgres::Error),
+    #[error("encoding a json column: {0}")]
+    Json(serde_json::Error),
     #[error("connecting to gres at {dsn}: {source}")]
     Connect {
         dsn: String,

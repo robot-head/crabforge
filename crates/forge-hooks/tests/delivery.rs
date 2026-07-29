@@ -70,7 +70,7 @@ fn webhook(url: &str) -> WebhookRecord {
         repo_id: "r".into(),
         url: url.to_string(),
         secret: "s3cret".into(),
-        events: "*".into(),
+        events: vec!["*".into()],
         active: true,
         created_at: now,
         updated_at: now,

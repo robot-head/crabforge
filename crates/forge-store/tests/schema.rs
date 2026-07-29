@@ -114,8 +114,8 @@ async fn users_round_trip_through_gres() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upsert_replaces_rather_than_duplicating_on_replay() {
-    // A projector replaying the log re-applies events it has already seen.
-    // Without ON CONFLICT this is a read-then-write, so it needs proving.
+    // A projector replaying the log re-applies events it has already seen, so
+    // the second apply has to land on the same row rather than beside it.
     let Some((_gres, store)) = migrated_store().await else {
         return;
     };
@@ -128,6 +128,60 @@ async fn upsert_replaces_rather_than_duplicating_on_replay() {
     check!(store.users().count().await.unwrap() == 1);
     let found = store.users().by_id(&user.user_id).await.unwrap().unwrap();
     check!(found.bio.as_deref() == Some("updated on replay"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replayed_creation_does_not_move_the_creation_time() {
+    // `created_at` is excluded from every DO UPDATE. If it were not, replaying
+    // the log would restamp every account and repository with the replay's
+    // clock, and "joined" dates would silently become "last rebuilt" dates.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let mut user = sample_user("founder");
+    let born = user.created_at;
+    store.users().upsert(&user).await.unwrap();
+
+    user.created_at = born + time::Duration::days(365);
+    user.updated_at = user.created_at;
+    store.users().upsert(&user).await.unwrap();
+
+    let found = store.users().by_id(&user.user_id).await.unwrap().unwrap();
+    check!(found.created_at == born, "the birthday moved");
+    check!(found.updated_at != born, "but the modification time should");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_duplicate_username_is_refused_by_the_database() {
+    // The command service is the only writer and holds a replay-built index of
+    // claimed names, so this should never happen. The constraint is here so
+    // that if it ever does, it surfaces as a rejected write rather than as two
+    // accounts answering to one name.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    store.users().upsert(&sample_user("octocat")).await.unwrap();
+
+    // A different account id, the same name.
+    let result = store.users().upsert(&sample_user("octocat")).await;
+    assert!(let Err(StoreError::Sql(_)) = result, "a second claim was allowed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_repositories_cannot_share_a_full_name() {
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let owner = sample_user("octocat");
+    store.users().upsert(&owner).await.unwrap();
+    store
+        .repos()
+        .upsert(&sample_repo(&owner, "hello"))
+        .await
+        .unwrap();
+
+    let result = store.repos().upsert(&sample_repo(&owner, "hello")).await;
+    assert!(let Err(StoreError::Sql(_)) = result);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -365,7 +419,7 @@ async fn a_token_is_looked_up_by_the_hash_of_the_presented_secret() {
             user_id: "user-1".into(),
             name: "laptop".into(),
             token_hash: forge_auth::digest(&secret),
-            scopes: "repo:write".into(),
+            scopes: vec!["repo:write".into()],
             created_at: now,
             expires_at: None,
             revoked_at: None,
@@ -399,7 +453,7 @@ async fn a_revoked_token_stops_working_but_stays_listed() {
         user_id: "user-1".into(),
         name: "ci".into(),
         token_hash: "h".into(),
-        scopes: "repo:read".into(),
+        scopes: vec!["repo:read".into()],
         created_at: now,
         expires_at: None,
         revoked_at: None,
@@ -414,4 +468,278 @@ async fn a_revoked_token_stops_working_but_stays_listed() {
     check!(!found.is_usable(now));
     // Still listed, so the settings page can show that it was revoked.
     check!(store.auth().tokens_for("user-1").await.unwrap().len() == 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_token_keeps_its_last_use_across_a_replay() {
+    // `last_used_at` is written directly by the web tier on every authenticated
+    // request, and is deliberately absent from the DO UPDATE list. A projector
+    // replaying the mint event must not roll it back to null — that would make
+    // the settings page report an actively used token as never used.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let now = forge_types::now();
+    let token = forge_store::AccessToken {
+        token_id: "tok-used".into(),
+        user_id: "user-1".into(),
+        name: "laptop".into(),
+        token_hash: "hh".into(),
+        scopes: vec!["repo:write".into()],
+        created_at: now,
+        expires_at: None,
+        revoked_at: None,
+        last_used_at: None,
+    };
+    store.auth().upsert_token(&token).await.unwrap();
+    store.auth().touch_token("tok-used").await.unwrap();
+
+    // The projector re-applies the mint event, which still carries no use time.
+    store.auth().upsert_token(&token).await.unwrap();
+
+    let found = store.auth().token_by_hash("hh").await.unwrap().unwrap();
+    check!(found.last_used_at.is_some(), "the last use was forgotten");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scopes_survive_the_array_column() {
+    // Stored as text[], so the round trip has to preserve both the elements and
+    // their order — an authorisation decision is made from what comes back.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let now = forge_types::now();
+    store
+        .auth()
+        .upsert_token(&forge_store::AccessToken {
+            token_id: "tok-scoped".into(),
+            user_id: "user-1".into(),
+            name: "ci".into(),
+            token_hash: "scoped".into(),
+            scopes: vec!["repo:read".into(), "repo:write".into(), "user".into()],
+            created_at: now,
+            expires_at: None,
+            revoked_at: None,
+            last_used_at: None,
+        })
+        .await
+        .unwrap();
+
+    let found = store.auth().token_by_hash("scoped").await.unwrap().unwrap();
+    check!(found.scopes == ["repo:read", "repo:write", "user"]);
+
+    // And they mean the same thing on the way out as on the way in.
+    let scopes = forge_auth::Scopes::from_stored(&found.scopes);
+    check!(scopes.allows(forge_auth::Scope::RepoWrite));
+    check!(!scopes.allows(forge_auth::Scope::RepoAdmin));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_empty_scope_array_is_not_the_same_as_a_missing_one() {
+    // A token with no scopes grants nothing. Round-tripping it as NULL, or as
+    // an array containing one empty string, would both be wrong in a way that
+    // an authorisation check might read as permissive.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let now = forge_types::now();
+    store
+        .auth()
+        .upsert_token(&forge_store::AccessToken {
+            token_id: "tok-bare".into(),
+            user_id: "user-1".into(),
+            name: "bare".into(),
+            token_hash: "bare".into(),
+            scopes: Vec::new(),
+            created_at: now,
+            expires_at: None,
+            revoked_at: None,
+            last_used_at: None,
+        })
+        .await
+        .unwrap();
+
+    let found = store.auth().token_by_hash("bare").await.unwrap().unwrap();
+    check!(found.scopes.is_empty());
+    check!(forge_auth::Scopes::from_stored(&found.scopes).is_empty());
+}
+
+/// A pull request with no trial merge yet, for the tests below.
+fn sample_pull(repo_id: &str, head: &str, base: &str) -> forge_store::PullRecord {
+    let now = forge_types::now();
+    forge_store::PullRecord {
+        pr_id: forge_types::PrId::new().to_string(),
+        repo_id: repo_id.to_string(),
+        number: 1,
+        title: "Add a thing".into(),
+        body: None,
+        author_id: "user-1".into(),
+        author_name: "octocat".into(),
+        state: "open".into(),
+        source_branch: "feature".into(),
+        target_branch: "main".into(),
+        head_oid: head.into(),
+        base_oid: base.into(),
+        merge_check: None,
+        merge_commit_oid: None,
+        merged_by_name: None,
+        comment_count: 0,
+        created_at: now,
+        updated_at: now,
+        merged_at: None,
+        closed_at: None,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_merge_check_survives_the_jsonb_column() {
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let pr = sample_pull("repo-1", "aaa", "bbb");
+    store.pulls().upsert(&pr).await.unwrap();
+
+    // Nobody has looked yet.
+    let found = store.pulls().by_id(&pr.pr_id).await.unwrap().unwrap();
+    check!(found.merge_check.is_none());
+    check!(found.mergeability() == forge_store::Mergeable::Unknown);
+
+    let check = forge_store::MergeCheck::conflict(
+        "aaa",
+        "bbb",
+        vec!["src/lib.rs".into(), "README.md".into()],
+    );
+    let applied = store
+        .pulls()
+        .record_check(&pr.pr_id, &check, forge_types::now())
+        .await
+        .unwrap();
+    check!(applied);
+
+    let found = store.pulls().by_id(&pr.pr_id).await.unwrap().unwrap();
+    check!(found.merge_check.as_ref() == Some(&check));
+    check!(found.mergeability() == forge_store::Mergeable::Conflict);
+    check!(found.conflicts() == ["src/lib.rs", "README.md"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_trial_merge_that_finishes_after_a_push_is_discarded() {
+    // The race this schema exists to close: a trial merge takes long enough
+    // that a push can land while it runs. Its answer is about the commit before
+    // that push, and writing it would offer a merge button for a merge nobody
+    // has tried.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let mut pr = sample_pull("repo-1", "old-head", "bbb");
+    store.pulls().upsert(&pr).await.unwrap();
+
+    // The push lands first.
+    pr.head_oid = "new-head".into();
+    store.pulls().upsert(&pr).await.unwrap();
+
+    // Then the trial merge for the old head finishes.
+    let stale = forge_store::MergeCheck::clean("old-head", "bbb");
+    let applied = store
+        .pulls()
+        .record_check(&pr.pr_id, &stale, forge_types::now())
+        .await
+        .unwrap();
+    check!(!applied, "a result for a commit that moved was stored");
+
+    let found = store.pulls().by_id(&pr.pr_id).await.unwrap().unwrap();
+    check!(found.merge_check.is_none());
+    check!(!found.can_merge());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_push_after_a_clean_check_takes_the_merge_button_away() {
+    // The same protection from the other direction: the check was current when
+    // written, and stops counting the moment the branch moves — without anyone
+    // having to remember to clear it.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let mut pr = sample_pull("repo-1", "head-1", "bbb");
+    store.pulls().upsert(&pr).await.unwrap();
+    store
+        .pulls()
+        .record_check(
+            &pr.pr_id,
+            &forge_store::MergeCheck::clean("head-1", "bbb"),
+            forge_types::now(),
+        )
+        .await
+        .unwrap();
+
+    let found = store.pulls().by_id(&pr.pr_id).await.unwrap().unwrap();
+    check!(found.can_merge());
+
+    // A push moves the head. The stored check is untouched on purpose.
+    pr.head_oid = "head-2".into();
+    pr.merge_check = found.merge_check.clone();
+    store.pulls().upsert(&pr).await.unwrap();
+
+    let found = store.pulls().by_id(&pr.pr_id).await.unwrap().unwrap();
+    check!(
+        found.merge_check.is_some(),
+        "the check should still be stored"
+    );
+    check!(
+        found.mergeability() == forge_store::Mergeable::Unknown,
+        "but it should no longer count"
+    );
+    check!(!found.can_merge());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_repeated_review_is_ignored_rather_than_doubled() {
+    // Reviews are inserted with ON CONFLICT DO NOTHING: the id comes from the
+    // event, so a redelivery is the same review, not a second one.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let review = forge_store::ReviewRecord {
+        review_id: "rev-1".into(),
+        pr_id: "pr-1".into(),
+        repo_id: "repo-1".into(),
+        reviewer_id: "user-2".into(),
+        reviewer_name: "reviewer".into(),
+        verdict: "approve".into(),
+        body: Some("looks good".into()),
+        created_at: forge_types::now(),
+    };
+    store.pulls().insert_review(&review).await.unwrap();
+    store.pulls().insert_review(&review).await.unwrap();
+
+    check!(store.pulls().reviews("pr-1").await.unwrap().len() == 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn webhook_events_survive_the_array_column() {
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let now = forge_types::now();
+    store
+        .hooks()
+        .upsert(&forge_store::WebhookRecord {
+            webhook_id: "w-1".into(),
+            repo_id: "repo-1".into(),
+            url: "https://example.com/hook".into(),
+            secret: "s3cret".into(),
+            events: vec!["issue.*".into(), "git.ref_updated".into()],
+            active: true,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+
+    let found = store.hooks().by_id("w-1").await.unwrap().unwrap();
+    check!(found.events == ["issue.*", "git.ref_updated"]);
+    // And a subscription still means what it meant before the round trip.
+    check!(found.wants("issue.opened"));
+    check!(found.wants("git.ref_updated"));
+    check!(!found.wants("pr.opened"));
 }

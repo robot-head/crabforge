@@ -129,10 +129,12 @@ async fn applied_versions(client: &Client) -> Result<Vec<i64>, StoreError> {
 }
 
 async fn apply(client: &Client, migration: &Migration) -> Result<(), StoreError> {
-    // Run the DDL and record it. Whether gres makes this atomic is an open
-    // question (see docs/gres-gaps.md); if it does not, a failure mid-migration
-    // leaves the schema partly applied and the ledger row absent, which
-    // `crabforge doctor` reports as a mismatch rather than silently retrying.
+    // Run the DDL and record it. gres does not make this atomic — a rolled-back
+    // CREATE TABLE leaves the table behind (measured; see docs/gres-gaps.md) —
+    // so a failure mid-migration leaves the schema partly applied and the
+    // ledger row absent, which `crabforge doctor` reports as a mismatch rather
+    // than silently retrying. Re-running recovers where every statement is one
+    // this runner tolerates repeating; it does not in general.
     // TODO(gres:transactional-ddl)
     client.batch_execute(migration.sql).await?;
     client

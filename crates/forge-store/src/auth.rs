@@ -25,8 +25,9 @@ pub struct AccessToken {
     pub user_id: String,
     pub name: String,
     pub token_hash: String,
-    /// Space-separated. Parsed by `forge-auth`, which owns the scope model.
-    pub scopes: String,
+    /// One scope per element. Interpreted by `forge-auth`, which owns the
+    /// scope model and decides what an unrecognised one means.
+    pub scopes: Vec<String>,
     pub created_at: OffsetDateTime,
     pub expires_at: Option<OffsetDateTime>,
     pub revoked_at: Option<OffsetDateTime>,
@@ -125,50 +126,32 @@ impl<'a> AuthStore<'a> {
     // ── tokens: projected from the log, except last_used_at ──────────────────
 
     /// Apply a token from the event log.
-    /// TODO(gres:on-conflict)
+    ///
+    /// `last_used_at` is left alone on conflict: it is written by the web tier
+    /// on every authenticated request, and a replay of the creation event must
+    /// not roll it back to null.
     pub async fn upsert_token(&self, token: &AccessToken) -> Result<(), StoreError> {
-        let existing = self
-            .client
-            .query_opt(
-                "SELECT token_id FROM access_tokens WHERE token_id = $1",
-                &[&token.token_id],
+        self.client
+            .execute(
+                "INSERT INTO access_tokens (token_id, user_id, name, token_hash, scopes, \
+                 created_at, expires_at, revoked_at, last_used_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+                 ON CONFLICT (token_id) DO UPDATE SET \
+                 name = excluded.name, scopes = excluded.scopes, \
+                 expires_at = excluded.expires_at, revoked_at = excluded.revoked_at",
+                &[
+                    &token.token_id,
+                    &token.user_id,
+                    &token.name,
+                    &token.token_hash,
+                    &token.scopes,
+                    &token.created_at,
+                    &token.expires_at,
+                    &token.revoked_at,
+                    &token.last_used_at,
+                ],
             )
             .await?;
-
-        if existing.is_some() {
-            self.client
-                .execute(
-                    "UPDATE access_tokens SET name = $2, scopes = $3, expires_at = $4, \
-                     revoked_at = $5 WHERE token_id = $1",
-                    &[
-                        &token.token_id,
-                        &token.name,
-                        &token.scopes,
-                        &token.expires_at,
-                        &token.revoked_at,
-                    ],
-                )
-                .await?;
-        } else {
-            self.client
-                .execute(
-                    "INSERT INTO access_tokens (token_id, user_id, name, token_hash, scopes, \
-                     created_at, expires_at, revoked_at, last_used_at) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-                    &[
-                        &token.token_id,
-                        &token.user_id,
-                        &token.name,
-                        &token.token_hash,
-                        &token.scopes,
-                        &token.created_at,
-                        &token.expires_at,
-                        &token.revoked_at,
-                        &token.last_used_at,
-                    ],
-                )
-                .await?;
-        }
         Ok(())
     }
 
@@ -240,7 +223,7 @@ mod tests {
             user_id: "u".into(),
             name: "laptop".into(),
             token_hash: "h".into(),
-            scopes: "repo:read".into(),
+            scopes: vec!["repo:read".into()],
             created_at: now,
             expires_at: expires_in.map(|d| now + d),
             revoked_at: revoked.then_some(now),

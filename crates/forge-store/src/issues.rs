@@ -55,55 +55,35 @@ impl<'a> IssueStore<'a> {
         Self { client }
     }
 
-    /// TODO(gres:on-conflict) — see `UserStore::upsert`.
+    /// See `UserStore::upsert`. The repository, number, and author are absent
+    /// from the update because an issue cannot move between repositories, be
+    /// renumbered, or change who filed it.
     pub async fn upsert(&self, issue: &IssueRecord) -> Result<(), StoreError> {
-        let existing = self
-            .client
-            .query_opt(
-                "SELECT issue_id FROM issues WHERE issue_id = $1",
-                &[&issue.issue_id],
+        self.client
+            .execute(
+                "INSERT INTO issues (issue_id, repo_id, number, title, body, author_id, \
+                 author_name, state, comment_count, created_at, updated_at, closed_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+                 ON CONFLICT (issue_id) DO UPDATE SET \
+                 title = excluded.title, body = excluded.body, state = excluded.state, \
+                 comment_count = excluded.comment_count, updated_at = excluded.updated_at, \
+                 closed_at = excluded.closed_at",
+                &[
+                    &issue.issue_id,
+                    &issue.repo_id,
+                    &issue.number,
+                    &issue.title,
+                    &issue.body,
+                    &issue.author_id,
+                    &issue.author_name,
+                    &issue.state,
+                    &issue.comment_count,
+                    &issue.created_at,
+                    &issue.updated_at,
+                    &issue.closed_at,
+                ],
             )
             .await?;
-
-        if existing.is_some() {
-            self.client
-                .execute(
-                    "UPDATE issues SET title = $2, body = $3, state = $4, comment_count = $5, \
-                     updated_at = $6, closed_at = $7 WHERE issue_id = $1",
-                    &[
-                        &issue.issue_id,
-                        &issue.title,
-                        &issue.body,
-                        &issue.state,
-                        &issue.comment_count,
-                        &issue.updated_at,
-                        &issue.closed_at,
-                    ],
-                )
-                .await?;
-        } else {
-            self.client
-                .execute(
-                    "INSERT INTO issues (issue_id, repo_id, number, title, body, author_id, \
-                     author_name, state, comment_count, created_at, updated_at, closed_at) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
-                    &[
-                        &issue.issue_id,
-                        &issue.repo_id,
-                        &issue.number,
-                        &issue.title,
-                        &issue.body,
-                        &issue.author_id,
-                        &issue.author_name,
-                        &issue.state,
-                        &issue.comment_count,
-                        &issue.created_at,
-                        &issue.updated_at,
-                        &issue.closed_at,
-                    ],
-                )
-                .await?;
-        }
         Ok(())
     }
 
@@ -177,25 +157,16 @@ impl<'a> IssueStore<'a> {
     }
 
     /// Add a comment.
+    ///
+    /// Replay re-delivers comments, so one already present is left alone rather
+    /// than inserted twice — the id is the event's, so a second delivery is the
+    /// same comment, not a new one.
     pub async fn insert_comment(&self, comment: &CommentRecord) -> Result<(), StoreError> {
-        // Replay re-delivers comments, so an existing one is skipped rather
-        // than inserted twice.
-        // TODO(gres:on-conflict)
-        let existing = self
-            .client
-            .query_opt(
-                "SELECT comment_id FROM issue_comments WHERE comment_id = $1",
-                &[&comment.comment_id],
-            )
-            .await?;
-        if existing.is_some() {
-            return Ok(());
-        }
-
         self.client
             .execute(
                 "INSERT INTO issue_comments (comment_id, issue_id, repo_id, author_id, \
-                 author_name, body, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                 author_name, body, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+                 ON CONFLICT (comment_id) DO NOTHING",
                 &[
                     &comment.comment_id,
                     &comment.issue_id,
@@ -268,7 +239,6 @@ impl<'a> IssueStore<'a> {
     ///
     /// Derived rather than incremented, so a replay cannot double-count and a
     /// counter cannot drift away from the rows it describes.
-    /// TODO(gres:on-conflict)
     pub async fn refresh_counters(&self, repo_id: &str) -> Result<Counters, StoreError> {
         let row = self
             .client
@@ -287,22 +257,15 @@ impl<'a> IssueStore<'a> {
             .await?;
         let closed: i64 = row.get(0);
 
-        let updated = self
-            .client
+        self.client
             .execute(
-                "UPDATE repo_counters SET open_issues = $2, closed_issues = $3 WHERE repo_id = $1",
+                "INSERT INTO repo_counters (repo_id, open_issues, closed_issues) \
+                 VALUES ($1, $2, $3) \
+                 ON CONFLICT (repo_id) DO UPDATE SET \
+                 open_issues = excluded.open_issues, closed_issues = excluded.closed_issues",
                 &[&repo_id, &open, &closed],
             )
             .await?;
-        if updated == 0 {
-            self.client
-                .execute(
-                    "INSERT INTO repo_counters (repo_id, open_issues, closed_issues) \
-                     VALUES ($1, $2, $3)",
-                    &[&repo_id, &open, &closed],
-                )
-                .await?;
-        }
         Ok(Counters {
             open_issues: open,
             closed_issues: closed,

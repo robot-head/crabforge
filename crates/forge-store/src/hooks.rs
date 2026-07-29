@@ -13,8 +13,9 @@ pub struct WebhookRecord {
     /// Stored as written, not digested: signatures are recomputed from it on
     /// every delivery, so a one-way hash would be useless.
     pub secret: String,
-    /// Space-separated event types, or `*` for all.
-    pub events: String,
+    /// Subscribed event types: exact (`issue.opened`), prefix (`issue.*`), or
+    /// the single element `*` for all.
+    pub events: Vec<String>,
     pub active: bool,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
@@ -26,7 +27,7 @@ impl WebhookRecord {
         self.active
             && self
                 .events
-                .split_whitespace()
+                .iter()
                 .any(|w| w == "*" || w == event_type || prefix_matches(w, event_type))
     }
 }
@@ -62,49 +63,26 @@ impl<'a> HookStore<'a> {
         Self { client }
     }
 
-    /// TODO(gres:on-conflict)
     pub async fn upsert(&self, hook: &WebhookRecord) -> Result<(), StoreError> {
-        let existing = self
-            .client
-            .query_opt(
-                "SELECT webhook_id FROM webhooks WHERE webhook_id = $1",
-                &[&hook.webhook_id],
+        self.client
+            .execute(
+                "INSERT INTO webhooks (webhook_id, repo_id, url, secret, events, active, \
+                 created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+                 ON CONFLICT (webhook_id) DO UPDATE SET \
+                 url = excluded.url, secret = excluded.secret, events = excluded.events, \
+                 active = excluded.active, updated_at = excluded.updated_at",
+                &[
+                    &hook.webhook_id,
+                    &hook.repo_id,
+                    &hook.url,
+                    &hook.secret,
+                    &hook.events,
+                    &hook.active,
+                    &hook.created_at,
+                    &hook.updated_at,
+                ],
             )
             .await?;
-
-        if existing.is_some() {
-            self.client
-                .execute(
-                    "UPDATE webhooks SET url = $2, secret = $3, events = $4, active = $5, \
-                     updated_at = $6 WHERE webhook_id = $1",
-                    &[
-                        &hook.webhook_id,
-                        &hook.url,
-                        &hook.secret,
-                        &hook.events,
-                        &hook.active,
-                        &hook.updated_at,
-                    ],
-                )
-                .await?;
-        } else {
-            self.client
-                .execute(
-                    "INSERT INTO webhooks (webhook_id, repo_id, url, secret, events, active, \
-                     created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                    &[
-                        &hook.webhook_id,
-                        &hook.repo_id,
-                        &hook.url,
-                        &hook.secret,
-                        &hook.events,
-                        &hook.active,
-                        &hook.created_at,
-                        &hook.updated_at,
-                    ],
-                )
-                .await?;
-        }
         Ok(())
     }
 
@@ -229,7 +207,7 @@ mod tests {
             repo_id: "r".into(),
             url: "https://example.com/hook".into(),
             secret: "s".into(),
-            events: events.into(),
+            events: events.split_whitespace().map(str::to_string).collect(),
             active,
             created_at: now,
             updated_at: now,

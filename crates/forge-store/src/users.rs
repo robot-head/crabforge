@@ -30,59 +30,33 @@ impl<'a> UserStore<'a> {
 
     /// Insert a user, or update it if the projector is replaying.
     ///
-    /// Replaces `INSERT … ON CONFLICT`, which gres does not have. Safe without
-    /// one because the projector is the only writer of this table: no other
-    /// session can insert the same row between the read and the write.
-    /// TODO(gres:on-conflict)
+    /// `created_at` is deliberately absent from the update: replaying the
+    /// creation event must not move the account's birthday.
     pub async fn upsert(&self, user: &UserRecord) -> Result<(), StoreError> {
-        let existing = self
-            .client
-            .query_opt(
-                "SELECT user_id FROM users WHERE user_id = $1",
-                &[&user.user_id],
+        self.client
+            .execute(
+                "INSERT INTO users (user_id, username, username_lower, email, password_hash, \
+                 display_name, bio, state, created_at, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+                 ON CONFLICT (user_id) DO UPDATE SET \
+                 username = excluded.username, username_lower = excluded.username_lower, \
+                 email = excluded.email, password_hash = excluded.password_hash, \
+                 display_name = excluded.display_name, bio = excluded.bio, \
+                 state = excluded.state, updated_at = excluded.updated_at",
+                &[
+                    &user.user_id,
+                    &user.username,
+                    &user.username_lower,
+                    &user.email,
+                    &user.password_hash,
+                    &user.display_name,
+                    &user.bio,
+                    &user.state,
+                    &user.created_at,
+                    &user.updated_at,
+                ],
             )
             .await?;
-
-        if existing.is_some() {
-            self.client
-                .execute(
-                    "UPDATE users SET username = $2, username_lower = $3, email = $4, \
-                     password_hash = $5, display_name = $6, bio = $7, state = $8, updated_at = $9 \
-                     WHERE user_id = $1",
-                    &[
-                        &user.user_id,
-                        &user.username,
-                        &user.username_lower,
-                        &user.email,
-                        &user.password_hash,
-                        &user.display_name,
-                        &user.bio,
-                        &user.state,
-                        &user.updated_at,
-                    ],
-                )
-                .await?;
-        } else {
-            self.client
-                .execute(
-                    "INSERT INTO users (user_id, username, username_lower, email, password_hash, \
-                     display_name, bio, state, created_at, updated_at) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-                    &[
-                        &user.user_id,
-                        &user.username,
-                        &user.username_lower,
-                        &user.email,
-                        &user.password_hash,
-                        &user.display_name,
-                        &user.bio,
-                        &user.state,
-                        &user.created_at,
-                        &user.updated_at,
-                    ],
-                )
-                .await?;
-        }
         Ok(())
     }
 
@@ -94,8 +68,8 @@ impl<'a> UserStore<'a> {
         Ok(row.as_ref().map(row_to_user))
     }
 
-    /// Look up by name. Hits `users_by_username_lower`, so callers must pass an
-    /// already-lowercased value — gres has no expression indexes, and a
+    /// Look up by name. Hits the `username_lower` unique index, so callers must
+    /// pass an already-lowercased value — gres has no expression indexes, and a
     /// `lower(username) = $1` predicate would scan.
     pub async fn by_username_lower(&self, lower: &str) -> Result<Option<UserRecord>, StoreError> {
         let row = self
