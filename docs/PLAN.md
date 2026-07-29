@@ -103,7 +103,8 @@ crabforge/
 ├── rust-toolchain.toml   # 1.97.1 (match crabka)
 ├── justfile              # dev loop: format/broker/gres/bootstrap/services/o11y/smoke (see Dev loop)
 ├── config/               # topics.toml manifest, broker.dev.toml template, grafana provisioning
-├── migrations/           # NNNN_name.sql, append-only, standard-PG with TODO(gres:*) tags
+├── migrations/           # NNNN_name.sql, standard-PG with TODO(gres:*) tags; one file
+│                         # edited in place until first deploy, append-only after
 ├── deploy/o11y/          # slimmed crabka observability compose (~14 containers, optional profile)
 ├── docs/gres-gaps.md     # ranked ledger of gres workarounds = upstream crabka backlog
 └── crates/
@@ -202,7 +203,7 @@ Every service: `crabka_telemetry::init(OtlpConfig::from_env(...))` (tracing + OT
 
 ### Dev loop
 
-`justfile` + `forge-cli` (Rust logic), CRABKA_DIR env (default `../crabka`): `just dev-up` = format-if-needed (with `--feature share.version=1`) → broker (`cargo run` from crabka checkout — incremental rebuild is the co-dev loop) → `crabforge bootstrap` (ensure-topics, `crabka gres create-tenant forge` tolerating exists, migrations) → gres substrate mode (127.0.0.1:5433) → services. `just dev-reset` = rm -rf .dev (cold replay is cheap in dev). `crabforge doctor`: broker up, share.version active, tenant exists, migrations current, topics present. Shared CARGO_TARGET_DIR/sccache across both workspaces. o11y compose is optional. Migration runner: append-only numbered SQL, ledger table, read-then-insert, no down-migrations (dev resets; prod = pre-start job); services refuse to serve if ledger behind.
+`justfile` + `forge-cli` (Rust logic), CRABKA_DIR env (default `../crabka`): `just dev-up` = format-if-needed (with `--feature share.version=1`) → broker (`cargo run` from crabka checkout — incremental rebuild is the co-dev loop) → `crabforge bootstrap` (ensure-topics, `crabka gres create-tenant forge` tolerating exists, migrations) → gres substrate mode (127.0.0.1:5433) → services. `just dev-reset` = rm -rf .dev (cold replay is cheap in dev). `crabforge doctor`: broker up, share.version active, tenant exists, migrations current, topics present. Shared CARGO_TARGET_DIR/sccache across both workspaces. o11y compose is optional. Migration runner: numbered SQL, ledger table, read-then-insert, no down-migrations (dev resets; prod = pre-start job); one file edited in place until first deploy, append-only after; services refuse to serve if ledger behind.
 
 ### Testing & CI
 

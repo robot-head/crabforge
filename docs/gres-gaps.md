@@ -68,7 +68,7 @@ merge button away.
 | 2 | **Composite and range index scans** | Index scans are single-column equality only, so every ordered list degrades to scan-and-sort within its repo-scoped row set. Bounds us to gres's ~10⁴-row comfort zone per repository. | Every hot query is narrowed by an indexed equality (`repo_id`, `parent_id`, `full_name_lower`) first; keyset pagination on monotonic keys so nothing changes app-side when ordered scans arrive. |
 | 3 | **Parameterized `LIMIT`** | Statement text varies with page size, defeating prepared-statement reuse. Affects every listing, since all of them are paginated. | The count is interpolated after passing through the `PageSize` refinement type. Tagged `TODO(gres:parameterized-limit)`. |
 | 4 | **Foreign keys** | No referential integrity in the database. | Enforced in the command service, which is the only writer and holds the authoritative state. |
-| 5 | **Transactional DDL** — confirmed absent, see below | A migration that fails partway leaves the tables it already created. | Migrations are re-runnable: the runner treats SQLSTATE `42P07` as success. `just dev-reset` while the project is pre-deployment. |
+| 5 | **Transactional DDL** — confirmed absent, see below | A migration that fails partway leaves the tables it already created, and the runner does *not* tolerate re-running it. | `just dev-reset` while the project is pre-deployment. Needs a real answer before first deploy. |
 | 6 | **`CHECK` constraints** | Enum-like columns (`state`, `visibility`, `verdict`) are unconstrained text. Parsed by gres but rejected with `0A000` until enforcement lands. | Validated in Rust before the write. Tagged `TODO(gres:check-constraints)`. |
 | 7 | **Savepoints** | No partial rollback inside a transaction. | Projector applies are small enough to retry whole. |
 | 8 | **Schemas** | Everything lives in `public`. | Table names carry their own prefixes. |
@@ -108,11 +108,16 @@ reuse. Tagged `TODO(gres:parameterized-limit)`.
 
 ### `CREATE TABLE IF NOT EXISTS`
 
-Not available, so the migration runner attempts the DDL and treats SQLSTATE
-`42P07` (`duplicate_table`) as success. Worth noting that gres *does* return the
-correct SQLSTATE, which is what makes the workaround tolerable — matching on
-message text would have been much worse. Tagged
+Not available. The runner needs it for one statement — creating the
+`schema_migrations` ledger, which it attempts on every boot — so `ensure_ledger`
+treats SQLSTATE `42P07` (`duplicate_table`) as success. Worth noting that gres
+*does* return the correct SQLSTATE, which is what makes the workaround tolerable
+— matching on message text would have been much worse. Tagged
 `TODO(gres:create-if-not-exists)`.
+
+Note that this tolerance covers **only** the ledger. Migration SQL itself is run
+by `apply()` with no such handling, which is what makes the next section's
+failure mode as sharp as it is.
 
 ### DDL is not transactional — answered
 
@@ -123,11 +128,15 @@ BEGIN; CREATE TABLE ddl_probe (a text); ROLLBACK;
 INSERT INTO ddl_probe VALUES ('x');   -- succeeds: the table survived the rollback
 ```
 
-So a migration that fails halfway leaves everything it had already created. The
-runner's `42P07` tolerance means re-running the same migration mostly recovers,
-but "mostly" is doing real work in that sentence — a failure between two
-`CREATE INDEX` statements is not covered. Acceptable now only because the
-project has no deployment to migrate; it needs a real answer before it does.
+So a migration that fails halfway leaves everything it had already created, and
+`apply()` does not tolerate `42P07` — that handling exists only for the ledger.
+Re-running therefore fails on the first table the previous attempt managed to
+create, and the database is stuck: partly migrated, with no ledger row saying
+so. The way out today is to drop everything and re-project, which is the
+disaster-recovery drill anyway.
+
+Acceptable only because the project has no deployment to migrate. Before it
+does, this needs either transactional DDL upstream or an idempotent runner.
 Tagged `TODO(gres:transactional-ddl)`.
 
 ### Not a gap: microsecond timestamps

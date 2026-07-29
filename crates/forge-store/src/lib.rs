@@ -1,8 +1,8 @@
 //! Read models, stored in crabka's `gres` Postgres engine.
 //!
-//! Everything here is derived state: the log is authoritative, and any table in
-//! this schema can be dropped and rebuilt by replaying topics from offset zero.
-//! That is not a theoretical property — it is the disaster-recovery procedure.
+//! The log is authoritative. Most of this schema is derived from it and can be
+//! dropped and rebuilt by replaying topics from offset zero — that is not a
+//! theoretical property, it is the disaster-recovery procedure.
 //!
 //! ## Who writes what
 //!
@@ -10,10 +10,19 @@
 //!   ON CONFLICT DO UPDATE`, so replaying an event lands on the row it already
 //!   wrote rather than beside it — idempotent because the statement says so,
 //!   not because of who happens to be writing.
-//! * The **web tier** owns only session and token-usage rows: operational state
-//!   with no place in domain history.
+//! * A few tables are **operational** and are not derived from the log at all:
+//!   `web_sessions`, `webhook_deliveries`, and the `access_tokens.last_used_at`
+//!   column. Whichever service observes the event writes it directly. These do
+//!   not survive the drill, which is accepted — the cost is that everyone is
+//!   logged out and up to the delivery topic's retention window of integration
+//!   diagnostics is gone, at the moment integrations are most likely broken.
 //!
-//! The two sets are disjoint, so gres never sees a write conflict between them.
+//! `access_tokens` is the one table two writers touch: the projector owns the
+//! row, the web tier owns `last_used_at`. They are confined to disjoint columns
+//! so the two never contend for the same value.
+//!
+//! `migrations/0001_schema.sql` labels each table with which kind it is, and is
+//! the authority if these ever disagree.
 //!
 //! ## Dialect
 //!

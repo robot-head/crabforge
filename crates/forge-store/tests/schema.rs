@@ -56,9 +56,11 @@ async fn migrations_apply_to_a_fresh_database() {
     let store = Store::connect(&gres.dsn()).await.unwrap();
 
     let applied = store.migrate().await.expect("migrations must run on gres");
-    // Every migration the binary carries, whatever that is today — so adding
-    // one does not require editing this test, and forgetting to register one
-    // still fails.
+    // Every migration the binary carries, whatever that is today, so adding one
+    // does not require editing this test. Note what this does *not* catch: both
+    // sides come from MIGRATIONS, so an SQL file that was never registered
+    // there is invisible here — the thing that catches that is the schema
+    // failing to have the table.
     let expected: Vec<i64> = migrate::MIGRATIONS.iter().map(|m| m.version).collect();
     check!(applied == expected);
     check!(migrate::is_current(store.client()).await.unwrap());
@@ -182,6 +184,102 @@ async fn two_repositories_cannot_share_a_full_name() {
 
     let result = store.repos().upsert(&sample_repo(&owner, "hello")).await;
     assert!(let Err(StoreError::Sql(_)) = result);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_issue_number_is_unique_within_its_repository_and_not_beyond() {
+    // `#7` has to mean one thing in a repository and something else in the next
+    // one. A constraint that got either half wrong would be invisible until
+    // either two issues collided or a second repository could not open one.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let issue = |repo: &str, id: &str, number: i64| {
+        let now = forge_types::now();
+        forge_store::IssueRecord {
+            issue_id: id.to_string(),
+            repo_id: repo.to_string(),
+            number,
+            title: "t".into(),
+            body: None,
+            author_id: "u".into(),
+            author_name: "octocat".into(),
+            state: "open".into(),
+            comment_count: 0,
+            created_at: now,
+            updated_at: now,
+            closed_at: None,
+        }
+    };
+    store
+        .issues()
+        .upsert(&issue("repo-a", "i1", 7))
+        .await
+        .unwrap();
+
+    // Same repository, same number, different issue: refused.
+    let clash = store.issues().upsert(&issue("repo-a", "i2", 7)).await;
+    assert!(let Err(StoreError::Sql(_)) = clash);
+
+    // Same number in another repository: allowed, and this is the half a
+    // too-broad constraint would break.
+    store
+        .issues()
+        .upsert(&issue("repo-b", "i3", 7))
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cursor_is_per_topic_and_partition() {
+    // The projector's cursor is keyed on both. If the key were topic alone,
+    // adding a second partition would silently overwrite the first one's
+    // progress and replay or skip events.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    store
+        .cursors()
+        .set_applied_offset("forge.events.repos", 5)
+        .await
+        .unwrap();
+    store
+        .cursors()
+        .set_applied_offset("forge.events.issues", 9)
+        .await
+        .unwrap();
+
+    check!(
+        store
+            .cursors()
+            .applied_offset("forge.events.repos")
+            .await
+            .unwrap()
+            == 5
+    );
+    check!(
+        store
+            .cursors()
+            .applied_offset("forge.events.issues")
+            .await
+            .unwrap()
+            == 9
+    );
+
+    // Re-recording the same topic advances rather than duplicating.
+    store
+        .cursors()
+        .set_applied_offset("forge.events.repos", 11)
+        .await
+        .unwrap();
+    check!(
+        store
+            .cursors()
+            .applied_offset("forge.events.repos")
+            .await
+            .unwrap()
+            == 11
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

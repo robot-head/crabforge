@@ -4,11 +4,17 @@
 //! does not have, so this is a deliberately small one:
 //!
 //! * Migrations are numbered SQL files embedded in the binary, applied in
-//!   order, never edited once merged.
+//!   order.
 //! * There are no down-migrations. The event log is the source of truth; the
 //!   way back from a bad schema is to drop the tables and re-project, which is
 //!   also the disaster-recovery drill.
 //! * A ledger table records what has been applied.
+//!
+//! While the project is pre-deployment there is exactly one migration and it is
+//! edited in place, because no database has the old schema and an incremental
+//! one would describe a state nothing was ever in. The rule that a merged
+//! migration is immutable starts applying the moment something is deployed —
+//! from then on `0001_schema.sql` is frozen and changes arrive as `0002_*`.
 //!
 //! Concurrency is by convention rather than locking — gres has no advisory
 //! locks. Migrations run from `crabforge migrate` (a pre-start job in
@@ -29,28 +35,11 @@ pub struct Migration {
 }
 
 /// Every migration, in application order.
-pub const MIGRATIONS: &[Migration] = &[
-    Migration {
-        version: 1,
-        name: "identity",
-        sql: include_str!("../../../migrations/0001_identity.sql"),
-    },
-    Migration {
-        version: 2,
-        name: "auth_and_issues",
-        sql: include_str!("../../../migrations/0002_auth_and_issues.sql"),
-    },
-    Migration {
-        version: 3,
-        name: "pull_requests",
-        sql: include_str!("../../../migrations/0003_pull_requests.sql"),
-    },
-    Migration {
-        version: 4,
-        name: "webhooks",
-        sql: include_str!("../../../migrations/0004_webhooks.sql"),
-    },
-];
+pub const MIGRATIONS: &[Migration] = &[Migration {
+    version: 1,
+    name: "schema",
+    sql: include_str!("../../../migrations/0001_schema.sql"),
+}];
 
 const LEDGER_DDL: &str = "CREATE TABLE schema_migrations (
     version    int8 NOT NULL,
@@ -131,10 +120,11 @@ async fn applied_versions(client: &Client) -> Result<Vec<i64>, StoreError> {
 async fn apply(client: &Client, migration: &Migration) -> Result<(), StoreError> {
     // Run the DDL and record it. gres does not make this atomic — a rolled-back
     // CREATE TABLE leaves the table behind (measured; see docs/gres-gaps.md) —
-    // so a failure mid-migration leaves the schema partly applied and the
-    // ledger row absent, which `crabforge doctor` reports as a mismatch rather
-    // than silently retrying. Re-running recovers where every statement is one
-    // this runner tolerates repeating; it does not in general.
+    // so a failure mid-migration leaves the schema partly applied and the ledger
+    // row absent. Nothing here tolerates a repeated statement (the `42P07`
+    // handling is in `ensure_ledger` and covers only the ledger), so re-running
+    // fails on the first object the previous attempt created. Recovery is to
+    // drop the schema and re-project, which is the disaster-recovery drill.
     // TODO(gres:transactional-ddl)
     client.batch_execute(migration.sql).await?;
     client
@@ -154,8 +144,9 @@ mod tests {
 
     #[test]
     fn migrations_are_numbered_consecutively_from_one() {
-        // A gap or a duplicate means a merge went wrong, and would be found at
-        // deploy time rather than here.
+        // Nearly vacuous while there is one migration, and deliberately kept:
+        // it starts doing real work the moment a second is appended, and a gap
+        // or a duplicate would otherwise be found at deploy time.
         for (index, migration) in MIGRATIONS.iter().enumerate() {
             check!(
                 migration.version == index as i64 + 1,
