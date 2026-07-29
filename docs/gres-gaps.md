@@ -65,6 +65,28 @@ not survive a round trip. This is standard PostgreSQL behaviour, not a gres
 limitation — recorded here only because it bit us once. `forge_types::now()`
 truncates at the point of creation so written and read values compare equal.
 
+## Watch: a feature branch that has not landed
+
+`claude/jsonb-on-conflict-arrays-listen-5cacf3` was reported as adding JSONB,
+`ON CONFLICT`, arrays and LISTEN, and as close to merging. As of 2026-07-29 it
+is **not** in crabka main and the branch no longer exists on the remote:
+
+- main is `2e135f0`; the engine crates have zero `jsonb` and zero `ON CONFLICT`
+  hits, and `Datum` still carries 13 variants.
+- The `listen`/`notify` matches in `pgexec` are all `tokio::sync::Notify` in the
+  lock manager, not SQL notification support.
+- `PG_COMPAT_MATRIX.md` still marks LISTEN, NOTIFY and ARRAY as Wave-assigned.
+
+The workarounds below therefore stay. When the work does land, adoption is
+mechanical — every affected site carries a `TODO(gres:<feature>)` tag, and the
+two worth doing first are:
+
+1. **`ON CONFLICT`** — every projector `upsert` becomes one statement, and the
+   "safe only because the projector is the single writer" caveat disappears
+   along with the read-then-write.
+2. **JSONB** — `pulls.mergeable` plus the `pr_conflicts` side table collapse
+   into one column, and event payloads become queryable in SQL.
+
 ## Contributing back
 
 Two directions, both in scope:
