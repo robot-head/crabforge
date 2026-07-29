@@ -1908,6 +1908,7 @@ dependencies = [
  "assert2",
  "clap",
  "crabka-client-admin",
+ "forge-store",
  "forge-testkit",
  "forge-topics",
  "tokio",

@@ -5,6 +5,7 @@
 # are testing the change. Set CRABKA_DIR if your checkout lives elsewhere.
 #
 #   just dev-up      bring the whole platform up
+#   just migrate     apply the schema (dev-up does this for you)
 #   just doctor      explain what is not ready
 #   just dev-reset   throw it all away and start clean
 
@@ -86,9 +87,17 @@ gres: gres-tenant
 bootstrap:
     cargo run -p forge-cli --bin crabforge -- --bootstrap {{ bootstrap }} bootstrap
 
+# Apply the schema. Safe to run on every boot.
+#
+# Note that editing migrations/0001_schema.sql does NOT re-apply it — the runner
+# skips a version already in the ledger. Run `just dev-reset` after schema edits.
+migrate:
+    cargo run -p forge-cli --bin crabforge -- --dsn "{{ gres_dsn }}" migrate
+
 # Explain what is not ready.
 doctor:
-    cargo run -p forge-cli --bin crabforge -- --bootstrap {{ bootstrap }} doctor
+    cargo run -p forge-cli --bin crabforge -- \
+      --bootstrap {{ bootstrap }} --dsn "{{ gres_dsn }}" doctor
 
 # Run the forge server.
 server:
@@ -97,7 +106,7 @@ server:
 # ── lifecycle ────────────────────────────────────────────────────────────────
 
 # Bring the platform up. Run `just broker` and `just gres` in their own shells
-# first — this waits for the broker, then provisions.
+# first — this waits for the broker, then provisions topics and the schema.
 dev-up:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -109,6 +118,9 @@ dev-up:
       sleep 1
     done
     just bootstrap
+    # The server refuses to start against an un-migrated database, so this is
+    # not optional — `crabforge migrate` waits for gres itself.
+    just migrate
     just doctor
 
 # Delete all local state. The broker log is the source of truth, and in

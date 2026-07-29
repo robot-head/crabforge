@@ -18,6 +18,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 crabka-client-admin.workspace = true
+forge-store.workspace = true
 forge-topics.workspace = true
 tokio.workspace = true
 tracing.workspace = true

@@ -70,10 +70,22 @@ pub async fn run(client: &Client) -> Result<Vec<i64>, StoreError> {
     Ok(newly_applied)
 }
 
-/// The highest migration this database has applied, or `None` when empty.
+/// The highest migration this database has applied, or `None` when none has.
+///
+/// Reads without writing. A database that has never been migrated has no ledger
+/// table at all, and that reads as `None` rather than as an error: no caller
+/// acts differently on "no ledger" than on "empty ledger", and creating the
+/// table here would mean `crabforge doctor` — whose whole job is to report on a
+/// database — quietly performing DDL against it.
 pub async fn current_version(client: &Client) -> Result<Option<i64>, StoreError> {
-    ensure_ledger(client).await?;
-    Ok(applied_versions(client).await?.into_iter().max())
+    match client
+        .query("SELECT version FROM schema_migrations", &[])
+        .await
+    {
+        Ok(rows) => Ok(rows.iter().map(|row| row.get::<_, i64>(0)).max()),
+        Err(e) if no_such_table(&e) => Ok(None),
+        Err(e) => Err(StoreError::Sql(e)),
+    }
 }
 
 /// The version this binary expects.
@@ -107,6 +119,14 @@ fn already_exists(error: &tokio_postgres::Error) -> bool {
     matches!(
         error.code(),
         Some(&tokio_postgres::error::SqlState::DUPLICATE_TABLE)
+    )
+}
+
+/// Whether an error means "no such table" — matched on SQLSTATE, as above.
+fn no_such_table(error: &tokio_postgres::Error) -> bool {
+    matches!(
+        error.code(),
+        Some(&tokio_postgres::error::SqlState::UNDEFINED_TABLE)
     )
 }
 
