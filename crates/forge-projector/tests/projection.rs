@@ -136,7 +136,7 @@ async fn projection_is_idempotent_across_a_full_replay() {
 
     // Rewind the cursor and replay everything from the beginning.
     h.store
-        .cursors()
+        .cursors(forge_store::PROJECTOR)
         .set_applied_offset(topics::EVENTS_USERS, 0)
         .await
         .unwrap();
@@ -234,7 +234,7 @@ async fn the_cursor_never_outruns_the_rows_it_accounts_for() {
 
     let cursor = h
         .store
-        .cursors()
+        .cursors(forge_store::PROJECTOR)
         .applied_offset(topics::EVENTS_USERS)
         .await
         .unwrap();
@@ -255,7 +255,7 @@ async fn draining_an_empty_topic_is_a_no_op() {
     check!(projector.drain().await.unwrap() == 0);
     check!(
         h.store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .applied_offset(topics::EVENTS_REPOS)
             .await
             .unwrap()

@@ -313,16 +313,23 @@ CREATE INDEX deliveries_by_webhook ON webhook_deliveries (webhook_id);
 
 -- ── Projection bookkeeping ──────────────────────────────────────────────────
 
--- The projector's own bookkeeping: neither projected nor operational, since it
--- is what makes projection possible. Where each projector has got to.
+-- Reader bookkeeping: neither projected nor operational, since it is what makes
+-- projection possible. How far each reader has got in each topic.
 --
--- Updated in the same transaction as the rows it covers, which is what makes
--- projection exactly-once in effect: a crash between reading the log and
--- committing replays the batch, and a crash after committing does not.
-CREATE TABLE projector_state (
+-- The projector updates its cursor in the same transaction as the rows it
+-- covers, which is what makes projection exactly-once in effect: a crash
+-- between reading the log and committing replays the batch, and a crash after
+-- committing does not.
+--
+-- `reader` exists because the projector is not the only one. The webhook
+-- matcher reads the same domain topics for a different purpose and must not
+-- share a cursor with it — one reader's progress says nothing about the
+-- other's, and a shared row would make whichever ran second skip events.
+CREATE TABLE reader_cursors (
+  reader         text NOT NULL,          -- 'projector' | 'webhooks' | …
   topic          text NOT NULL,
   partition      int4 NOT NULL,
   applied_offset int8 NOT NULL,
   updated_at     timestamptz NOT NULL,
-  PRIMARY KEY (topic, partition)
+  PRIMARY KEY (reader, topic, partition)
 );

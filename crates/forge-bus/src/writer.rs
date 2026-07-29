@@ -45,6 +45,15 @@ pub const COMMAND_TRANSACTIONAL_ID: &str = "forge.cmd.main";
 /// uploads.
 pub const OBJECT_TRANSACTIONAL_ID: &str = "forge.objects.main";
 
+/// The transactional id the webhook matcher claims.
+///
+/// A third identity for the same reason as the second: the matcher writes
+/// continuously as events arrive, and sharing an id with the command service
+/// would mean the first webhook fan-out fenced it. It is also genuinely a
+/// different writer — it produces nothing the command service decides, only
+/// consequences of decisions already committed.
+pub const WEBHOOK_TRANSACTIONAL_ID: &str = "forge.webhooks.main";
+
 #[derive(Debug, thiserror::Error)]
 pub enum WriteError {
     /// Another writer took over. This instance must stop writing; it can no

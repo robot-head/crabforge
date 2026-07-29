@@ -47,7 +47,7 @@ pub use auth::{AccessToken, AuthStore, Session};
 pub use hooks::{DeliveryRecord, HookStore, WebhookRecord};
 pub use issues::{CommentRecord, Counters, IssueRecord, IssueStore};
 pub use pulls::{MergeCheck, Mergeable, PullRecord, PullStore, ReviewRecord};
-pub use repos::{CursorStore, RepoRecord, RepoStore};
+pub use repos::{CursorStore, PROJECTOR, RepoRecord, RepoStore, WEBHOOK_MATCHER, WEBHOOK_WORKER};
 pub use users::{UserRecord, UserStore};
 
 /// Largest page any listing will return.
@@ -282,8 +282,10 @@ impl Store {
         RepoStore::new(&self.client)
     }
 
-    pub fn cursors(&self) -> CursorStore<'_> {
-        CursorStore::new(&self.client)
+    /// Cursors for `reader` — see [`repos::PROJECTOR`] and
+    /// [`repos::WEBHOOK_MATCHER`] for the names in use.
+    pub fn cursors<'a>(&'a self, reader: &'a str) -> CursorStore<'a> {
+        CursorStore::new(&self.client, reader)
     }
 
     pub fn auth(&self) -> AuthStore<'_> {

@@ -24,6 +24,7 @@ crabka-client-admin.workspace = true
 forge-bus.workspace = true
 forge-command.workspace = true
 forge-git.workspace = true
+forge-hooks.workspace = true
 forge-githttp.workspace = true
 forge-render.workspace = true
 forge-web.workspace = true

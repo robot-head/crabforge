@@ -12,5 +12,5 @@ mod writer;
 pub use tailer::{Batch, FetchedRecord, TailError, Tailer};
 pub use writer::{
     COMMAND_TRANSACTIONAL_ID, Committed, FencedWriter, IndeterminateHandler,
-    OBJECT_TRANSACTIONAL_ID, PendingRecord, WriteError,
+    OBJECT_TRANSACTIONAL_ID, PendingRecord, WEBHOOK_TRANSACTIONAL_ID, WriteError,
 };

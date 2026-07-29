@@ -125,6 +125,54 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Webhook delivery. Its own writer identity: the matcher produces
+    // continuously as events land, and sharing the command service's
+    // transactional id would mean the first fan-out fenced it.
+    let hook_writer = Arc::new(
+        forge_bus::FencedWriter::connect_with_id(
+            &args.bootstrap,
+            forge_bus::WEBHOOK_TRANSACTIONAL_ID,
+        )
+        .await
+        .context("starting the webhook writer")?,
+    );
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    for topic in forge_hooks::matched_topics() {
+        let store = Store::connect(&args.dsn)
+            .await
+            .with_context(|| format!("connecting a database session for webhooks on {topic}"))?;
+        let matcher =
+            forge_hooks::Matcher::open(&args.bootstrap, topic, store, Arc::clone(&hook_writer))
+                .await
+                .with_context(|| format!("opening the webhook matcher for {topic}"))?;
+        tokio::spawn(matcher.run(shutdown_rx.clone()));
+    }
+
+    // One worker per partition of the delivery queue. The queue is partitioned
+    // so that a receiver which has stopped answering holds up its own
+    // deliveries and not the whole forge; a single worker would give that up.
+    for partition in 0..forge_hooks::Worker::partitions() {
+        let store = Store::connect(&args.dsn)
+            .await
+            .with_context(|| format!("connecting a database session for deliveries {partition}"))?;
+        let worker = forge_hooks::Worker::open(
+            &args.bootstrap,
+            partition,
+            store,
+            forge_hooks::Deliverer::new(),
+            Arc::clone(&hook_writer),
+        )
+        .await
+        .with_context(|| format!("opening the webhook worker for partition {partition}"))?;
+        tokio::spawn(worker.run(shutdown_rx.clone()));
+    }
+    tracing::info!(
+        matchers = forge_hooks::matched_topics().len(),
+        workers = forge_hooks::Worker::partitions(),
+        "webhook delivery running"
+    );
+
     // Stylesheets are embedded in the binary and served by the web router, so
     // a deployment is one file with no asset path to misconfigure.
     let state = state.with_web(&args.cache_root, args.secure_cookies, object_writer);

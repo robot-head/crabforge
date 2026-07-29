@@ -70,7 +70,10 @@ impl Projector {
     pub async fn open(bootstrap: &str, topic: &str, store: Store) -> Result<Self, ProjectorError> {
         // Resume from gres, not from a broker-side consumer group offset: the
         // cursor has to move atomically with the rows, so it lives with them.
-        let resume_from = store.cursors().applied_offset(topic).await?;
+        let resume_from = store
+            .cursors(forge_store::PROJECTOR)
+            .applied_offset(topic)
+            .await?;
         let tailer = Tailer::open_at(bootstrap, topic, resume_from).await?;
         let (applied, _) = watch::channel(resume_from - 1);
         tracing::info!(topic, resume_from, "projector opened");
@@ -128,7 +131,7 @@ impl Projector {
 
             if let Err(e) = self
                 .store
-                .cursors()
+                .cursors(forge_store::PROJECTOR)
                 .set_applied_offset(self.tailer.topic(), batch.next_offset)
                 .await
             {
@@ -175,7 +178,7 @@ impl Projector {
         }
         if let Err(e) = self
             .store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .set_applied_offset(self.tailer.topic(), batch.next_offset)
             .await
         {
@@ -269,7 +272,7 @@ impl Projector {
 
     async fn commit_cursor(&self, offset: i64) -> Result<(), ProjectorError> {
         self.store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .set_applied_offset(self.tailer.topic(), offset)
             .await?;
         self.publish_applied(offset - 1);

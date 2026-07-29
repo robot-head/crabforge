@@ -239,19 +239,19 @@ async fn a_cursor_is_per_topic_and_partition() {
         return;
     };
     store
-        .cursors()
+        .cursors(forge_store::PROJECTOR)
         .set_applied_offset("forge.events.repos", 5)
         .await
         .unwrap();
     store
-        .cursors()
+        .cursors(forge_store::PROJECTOR)
         .set_applied_offset("forge.events.issues", 9)
         .await
         .unwrap();
 
     check!(
         store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .applied_offset("forge.events.repos")
             .await
             .unwrap()
@@ -259,7 +259,7 @@ async fn a_cursor_is_per_topic_and_partition() {
     );
     check!(
         store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .applied_offset("forge.events.issues")
             .await
             .unwrap()
@@ -268,13 +268,13 @@ async fn a_cursor_is_per_topic_and_partition() {
 
     // Re-recording the same topic advances rather than duplicating.
     store
-        .cursors()
+        .cursors(forge_store::PROJECTOR)
         .set_applied_offset("forge.events.repos", 11)
         .await
         .unwrap();
     check!(
         store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .applied_offset("forge.events.repos")
             .await
             .unwrap()
@@ -388,7 +388,7 @@ async fn the_projector_cursor_persists_and_advances() {
     let Some((_gres, store)) = migrated_store().await else {
         return;
     };
-    let cursors = store.cursors();
+    let cursors = store.cursors(forge_store::PROJECTOR);
 
     // A topic never projected starts at the beginning of the log.
     check!(cursors.applied_offset("forge.events.repos").await.unwrap() == 0);
@@ -421,7 +421,7 @@ async fn a_transaction_rolls_back_rows_and_cursor_together() {
     store.client().batch_execute("BEGIN").await.unwrap();
     store.users().upsert(&user).await.unwrap();
     store
-        .cursors()
+        .cursors(forge_store::PROJECTOR)
         .set_applied_offset("forge.events.users", 7)
         .await
         .unwrap();
@@ -433,7 +433,7 @@ async fn a_transaction_rolls_back_rows_and_cursor_together() {
     );
     check!(
         store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .applied_offset("forge.events.users")
             .await
             .unwrap()

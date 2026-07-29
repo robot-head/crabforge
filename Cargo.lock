@@ -1994,9 +1994,11 @@ version = "0.1.0"
 dependencies = [
  "assert2",
  "axum",
+ "forge-bus",
  "forge-events",
  "forge-store",
  "forge-testkit",
+ "forge-topics",
  "forge-types",
  "hmac",
  "reqwest 0.13.4",
@@ -2007,6 +2009,7 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2053,6 +2056,7 @@ dependencies = [
  "forge-command",
  "forge-git",
  "forge-githttp",
+ "forge-hooks",
  "forge-projector",
  "forge-render",
  "forge-store",
