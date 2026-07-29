@@ -14,10 +14,14 @@
 
 pub mod discover;
 pub mod plan;
+pub mod queue;
+pub mod runner;
 pub mod sandbox;
 pub mod workflow;
 
 pub use discover::{Discovered, Found, WORKFLOW_DIR, discover};
 pub use plan::{PlannedJob, PlannedRun, plan_push};
+pub use queue::{Disposition, QueuedJob};
+pub use runner::{JobOutcome, LogSink, run_job};
 pub use sandbox::{ProcessSandbox, Sandbox, StepOutcome, StepResult};
 pub use workflow::{Job, Step, Trigger, Workflow, WorkflowError};

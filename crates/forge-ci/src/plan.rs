@@ -7,7 +7,7 @@
 use crate::{discover::Discovered, workflow::Job};
 
 /// One job to create and queue.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlannedJob {
     /// The key from the workflow's `jobs:` map. Unique within its run.
     pub name: String,

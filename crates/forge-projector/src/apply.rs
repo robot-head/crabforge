@@ -5,7 +5,9 @@
 //! history. Applying an event a second time must leave the same row it left the
 //! first time.
 
-use forge_events::{IssueEvent, PrEvent, RepoEvent, UserEvent};
+use forge_events::{
+    CiEvent, IssueEvent, JobConclusion, PrEvent, RepoEvent, RunConclusion, UserEvent,
+};
 use forge_store::{CommentRecord, IssueRecord, PullRecord, ReviewRecord, Store, StoreError};
 use time::OffsetDateTime;
 
@@ -475,4 +477,172 @@ where
     mutate(&mut pr);
     pr.updated_at = at;
     store.pulls().upsert(&pr).await
+}
+
+/// Apply a CI event to `ci_runs` and `ci_jobs`.
+///
+/// The two writes that are not plain upserts are deliberate. Claiming a job and
+/// finishing one are conditional, because job delivery is at-least-once: the
+/// same job can be handed to two runners, and both will report. The conditions
+/// decide which report counts — see [`forge_store::CiStore::claim_job`] and
+/// `finish_job`.
+pub async fn apply_ci_event(
+    store: &Store,
+    event: &CiEvent,
+    at: OffsetDateTime,
+) -> Result<(), StoreError> {
+    match event {
+        CiEvent::RunQueued {
+            run_id,
+            repo_id,
+            number,
+            workflow,
+            name: _,
+            event,
+            head_oid,
+            ref_name,
+            actor_name,
+            jobs,
+        } => {
+            store
+                .ci()
+                .upsert_run(&forge_store::RunRecord {
+                    run_id: run_id.to_string(),
+                    repo_id: repo_id.to_string(),
+                    number: *number,
+                    workflow: workflow.clone(),
+                    event: event.clone(),
+                    head_oid: head_oid.to_hex(),
+                    ref_name: ref_name.clone(),
+                    actor_name: actor_name.clone(),
+                    status: "queued".to_string(),
+                    created_at: at,
+                    updated_at: at,
+                    started_at: None,
+                    finished_at: None,
+                })
+                .await?;
+
+            for spec in jobs {
+                store
+                    .ci()
+                    .upsert_job(&forge_store::JobRecord {
+                        job_id: spec.job_id.to_string(),
+                        run_id: run_id.to_string(),
+                        repo_id: repo_id.to_string(),
+                        name: spec.name.clone(),
+                        image: spec.image.clone(),
+                        status: "queued".to_string(),
+                        // Zero means nobody has claimed it. The first claim
+                        // takes attempt 1.
+                        attempt: 0,
+                        exit_code: None,
+                        log_offset: None,
+                        created_at: at,
+                        updated_at: at,
+                        started_at: None,
+                        finished_at: None,
+                    })
+                    .await?;
+            }
+            Ok(())
+        }
+
+        CiEvent::JobStarted {
+            job_id,
+            run_id,
+            attempt,
+            log_offset,
+            ..
+        } => {
+            let claimed = store
+                .ci()
+                .claim_job(&job_id.to_string(), *attempt, *log_offset, at)
+                .await?;
+            if !claimed {
+                // Someone else already has it, or it is already finished. Not
+                // an error: this is exactly what the compare-and-swap is for.
+                tracing::debug!(%job_id, attempt, "ignoring a start for a job already claimed");
+                return Ok(());
+            }
+            // The run is running as soon as any job of it is.
+            mark_run_running(store, &run_id.to_string(), at).await
+        }
+
+        CiEvent::JobFinished {
+            job_id,
+            attempt,
+            conclusion,
+            exit_code,
+            ..
+        } => {
+            store
+                .ci()
+                .finish_job(
+                    &job_id.to_string(),
+                    *attempt,
+                    conclusion.as_str(),
+                    exit_code.map(i64::from),
+                    at,
+                )
+                .await?;
+            Ok(())
+        }
+
+        CiEvent::RunFinished {
+            run_id, conclusion, ..
+        } => {
+            let run_id = run_id.to_string();
+            let Some(mut run) = store.ci().run_by_id(&run_id).await? else {
+                return Ok(());
+            };
+            run.status = conclusion.as_str().to_string();
+            run.updated_at = at;
+            run.finished_at = Some(at);
+            store.ci().upsert_run(&run).await
+        }
+    }
+}
+
+/// Move a run to `running`, unless it has moved on already.
+async fn mark_run_running(
+    store: &Store,
+    run_id: &str,
+    at: OffsetDateTime,
+) -> Result<(), StoreError> {
+    let Some(mut run) = store.ci().run_by_id(run_id).await? else {
+        return Ok(());
+    };
+    if run.status != "queued" {
+        return Ok(());
+    }
+    run.status = "running".to_string();
+    run.updated_at = at;
+    run.started_at = Some(at);
+    store.ci().upsert_run(&run).await
+}
+
+/// Whether every job of a run has finished, and how it went.
+///
+/// Returned rather than written: deciding a run is over is the orchestrator's
+/// job, because it is the thing that emits [`CiEvent::RunFinished`], and a
+/// projector that wrote conclusions itself would be inventing history rather
+/// than replaying it.
+pub async fn run_conclusion(
+    store: &Store,
+    run_id: &str,
+) -> Result<Option<RunConclusion>, StoreError> {
+    let jobs = store.ci().jobs_of(run_id).await?;
+    if jobs.is_empty() || !jobs.iter().all(|job| job.is_finished()) {
+        return Ok(None);
+    }
+    Ok(Some(RunConclusion::from_jobs(jobs.iter().map(
+        |job| match job.status.as_str() {
+            "success" => JobConclusion::Success,
+            "timed_out" => JobConclusion::TimedOut,
+            "infra_failed" => JobConclusion::InfraFailed,
+            "cancelled" => JobConclusion::Cancelled,
+            _ => JobConclusion::Failed,
+        },
+    ))))
 }

@@ -31,14 +31,17 @@
 use std::time::Duration;
 
 use forge_bus::{TailError, Tailer};
-use forge_events::{IssueEvent, PrEvent, RepoEvent, UserEvent, decode_raw};
+use forge_events::{CiEvent, IssueEvent, PrEvent, RepoEvent, UserEvent, decode_raw};
 use forge_store::{RepoRecord, Store, StoreError, UserRecord};
 use forge_types::topics;
 use tokio::sync::watch;
 
 mod apply;
 
-pub use apply::{apply_issue_event, apply_pr_event, apply_repo_event, apply_user_event};
+pub use apply::{
+    apply_ci_event, apply_issue_event, apply_pr_event, apply_repo_event, apply_user_event,
+    run_conclusion,
+};
 
 /// How long to wait for new records before looping again.
 const POLL_WAIT_MS: i32 = 500;
@@ -249,6 +252,20 @@ impl Projector {
                         event_type = %envelope.event_type,
                         error = %e,
                         "skipping unrecognized pull request event"
+                    );
+                }
+            }
+        } else if topic == topics::EVENTS_CI {
+            match envelope.parse::<CiEvent>() {
+                Ok(parsed) => {
+                    apply_ci_event(&self.store, &parsed.payload, parsed.occurred_at).await?;
+                    return Ok(true);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        event_type = %envelope.event_type,
+                        error = %e,
+                        "skipping unrecognized CI event"
                     );
                 }
             }

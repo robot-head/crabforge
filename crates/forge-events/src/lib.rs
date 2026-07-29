@@ -8,7 +8,10 @@ pub mod ce;
 mod domain;
 mod envelope;
 
-pub use domain::{GitRefEvent, IssueEvent, PrEvent, RepoEvent, ReviewVerdict, UserEvent};
+pub use domain::{
+    CiEvent, GitRefEvent, IssueEvent, JobConclusion, PlannedJobSpec, PrEvent, RepoEvent,
+    ReviewVerdict, RunConclusion, UserEvent,
+};
 pub use envelope::{DecodeError, DomainEvent, Envelope, RawEnvelope, decode_raw};
 
 /// Topic names, re-exported from `forge-types` where they are defined.

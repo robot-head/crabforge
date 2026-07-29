@@ -4,7 +4,7 @@
 //! stream, so an event that is wrong is wrong forever — hence the versioning
 //! discipline in [`crate::Envelope`].
 
-use forge_types::{CommentId, IssueId, Oid, PrId, RepoId, Role, UserId, Visibility};
+use forge_types::{CommentId, IssueId, JobId, Oid, PrId, RepoId, Role, RunId, UserId, Visibility};
 use serde::{Deserialize, Serialize};
 
 use crate::{DomainEvent, topics};
@@ -468,5 +468,269 @@ mod tests {
         let json = serde_json::to_value(&event).unwrap();
         check!(json["kind"] == "collaborator_added");
         check!(serde_json::from_value::<RepoEvent>(json).unwrap() == event);
+    }
+}
+
+/// Something happened to a CI run or one of its jobs.
+///
+/// Runs and jobs are event-sourced like everything else, which is what lets a
+/// dropped database be rebuilt with the same build history rather than an empty
+/// one. It also decides where the truth lives while a job is executing: the
+/// runner reports by appending here, and `ci_jobs` is a projection of what it
+/// said — so a runner that dies has said nothing, and the reconciler can tell
+/// that from a runner that said "failed".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CiEvent {
+    /// A push matched a workflow and its jobs were planned.
+    ///
+    /// Carries every job up front rather than one event per job: they are
+    /// decided together from one commit, and a partial plan reaching the
+    /// projector would show a run with jobs still appearing.
+    RunQueued {
+        run_id: RunId,
+        repo_id: RepoId,
+        /// Per repository, allocated by the command service.
+        number: i64,
+        /// Repo-relative path of the workflow file.
+        workflow: String,
+        /// The workflow's display name.
+        name: String,
+        /// What triggered it.
+        event: String,
+        /// The commit the workflow was read at and jobs run against.
+        head_oid: Oid,
+        /// Fully qualified, e.g. `refs/heads/main`.
+        ref_name: String,
+        actor_name: String,
+        jobs: Vec<PlannedJobSpec>,
+    },
+    /// A runner picked a job up.
+    ///
+    /// `attempt` is the delivery this claim is for. Consumption is
+    /// at-least-once, so two runners can be handed the same job; the attempt
+    /// number is what lets the projector keep the first claim and ignore a
+    /// later one for an earlier delivery.
+    JobStarted {
+        job_id: JobId,
+        run_id: RunId,
+        repo_id: RepoId,
+        attempt: i64,
+        /// Where this job's log chunks begin on the log topic.
+        log_offset: i64,
+    },
+    /// A runner finished a job, for any definition of finished.
+    JobFinished {
+        job_id: JobId,
+        run_id: RunId,
+        repo_id: RepoId,
+        attempt: i64,
+        conclusion: JobConclusion,
+        /// Absent when the job never produced one — a timeout, or a sandbox
+        /// that could not start.
+        exit_code: Option<i32>,
+    },
+    /// Every job of a run has finished.
+    ///
+    /// Derived rather than observed: a run's conclusion is a function of its
+    /// jobs', and recording it separately means the UI does not have to
+    /// recompute it on every page view.
+    RunFinished {
+        run_id: RunId,
+        repo_id: RepoId,
+        conclusion: RunConclusion,
+    },
+}
+
+/// A job as planned, carried in [`CiEvent::RunQueued`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannedJobSpec {
+    pub job_id: JobId,
+    /// The key from the workflow's `jobs:` map.
+    pub name: String,
+    pub image: String,
+}
+
+/// How a job ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobConclusion {
+    Success,
+    /// Ran and reported failure — something about the code.
+    Failed,
+    /// Killed for overrunning its timeout.
+    TimedOut,
+    /// Never really ran: no such image, no runner, a sandbox that broke.
+    /// Kept apart from `Failed` so nobody debugs their tests over it.
+    InfraFailed,
+    Cancelled,
+}
+
+impl JobConclusion {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::TimedOut => "timed_out",
+            Self::InfraFailed => "infra_failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn is_success(self) -> bool {
+        matches!(self, Self::Success)
+    }
+}
+
+/// How a run ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunConclusion {
+    Success,
+    Failed,
+    Cancelled,
+}
+
+impl RunConclusion {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// A run is as good as its worst job.
+    ///
+    /// Anything that is not a success fails the run, including a job that never
+    /// ran: a green check on a run whose jobs did not execute is the one
+    /// outcome a CI system must never produce.
+    pub fn from_jobs(conclusions: impl IntoIterator<Item = JobConclusion>) -> Self {
+        let mut cancelled_only = true;
+        let mut any = false;
+        for conclusion in conclusions {
+            any = true;
+            match conclusion {
+                JobConclusion::Success => cancelled_only = false,
+                JobConclusion::Cancelled => {}
+                _ => return Self::Failed,
+            }
+        }
+        match (any, cancelled_only) {
+            (true, true) => Self::Cancelled,
+            _ => Self::Success,
+        }
+    }
+}
+
+impl DomainEvent for CiEvent {
+    fn topic(&self) -> &'static str {
+        topics::EVENTS_CI
+    }
+
+    fn event_type(&self) -> &'static str {
+        match self {
+            Self::RunQueued { .. } => "ci.run_queued",
+            Self::JobStarted { .. } => "ci.job_started",
+            Self::JobFinished { .. } => "ci.job_finished",
+            Self::RunFinished { .. } => "ci.run_finished",
+        }
+    }
+
+    fn aggregate_id(&self) -> String {
+        // Keyed by run, not by job: a run's events must stay mutually ordered,
+        // or a projector could see a job finish before the run that owns it
+        // exists.
+        match self {
+            Self::RunQueued { run_id, .. }
+            | Self::JobStarted { run_id, .. }
+            | Self::JobFinished { run_id, .. }
+            | Self::RunFinished { run_id, .. } => run_id.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod ci_tests {
+    use assert2::check;
+
+    use super::*;
+
+    #[test]
+    fn a_run_is_as_good_as_its_worst_job() {
+        use JobConclusion::*;
+        check!(RunConclusion::from_jobs([Success, Success]) == RunConclusion::Success);
+        check!(RunConclusion::from_jobs([Success, Failed]) == RunConclusion::Failed);
+        check!(RunConclusion::from_jobs([Success, TimedOut]) == RunConclusion::Failed);
+    }
+
+    #[test]
+    fn a_job_that_never_ran_does_not_produce_a_green_check() {
+        // The outcome a CI system must never produce: passing because nothing
+        // was executed. An infrastructure failure fails the run.
+        use JobConclusion::*;
+        check!(RunConclusion::from_jobs([Success, InfraFailed]) == RunConclusion::Failed);
+        check!(RunConclusion::from_jobs([InfraFailed]) == RunConclusion::Failed);
+    }
+
+    #[test]
+    fn a_run_whose_jobs_were_all_cancelled_is_cancelled_not_failed() {
+        // Somebody stopped it on purpose; calling that a failure would put a
+        // red cross on a pull request that was never tested.
+        use JobConclusion::*;
+        check!(RunConclusion::from_jobs([Cancelled, Cancelled]) == RunConclusion::Cancelled);
+        // But a cancelled job alongside a real one does not hide the real one.
+        check!(RunConclusion::from_jobs([Cancelled, Failed]) == RunConclusion::Failed);
+        check!(RunConclusion::from_jobs([Cancelled, Success]) == RunConclusion::Success);
+    }
+
+    #[test]
+    fn a_run_with_no_jobs_succeeds_vacuously() {
+        // Unreachable today — a workflow with no jobs is refused at parse time
+        // — but the fold has to answer something, and "failed" for a run that
+        // was never asked to do anything would be a lie.
+        check!(RunConclusion::from_jobs([]) == RunConclusion::Success);
+    }
+
+    #[test]
+    fn ci_events_are_keyed_by_their_run() {
+        // Ordering within a run is what stops a projector seeing a job finish
+        // before the run that owns it exists.
+        let run_id = RunId::new();
+        let queued = CiEvent::RunQueued {
+            run_id,
+            repo_id: RepoId::new(),
+            number: 1,
+            workflow: ".crabforge/workflows/build.yml".into(),
+            name: "build".into(),
+            event: "push".into(),
+            head_oid: Oid::from_bytes([7u8; 20]),
+            ref_name: "refs/heads/main".into(),
+            actor_name: "octocat".into(),
+            jobs: Vec::new(),
+        };
+        let finished = CiEvent::RunFinished {
+            run_id,
+            repo_id: RepoId::new(),
+            conclusion: RunConclusion::Success,
+        };
+        check!(queued.aggregate_id() == finished.aggregate_id());
+        check!(queued.topic() == topics::EVENTS_CI);
+        check!(queued.event_type() == "ci.run_queued");
+    }
+
+    #[test]
+    fn ci_events_survive_their_json_encoding() {
+        let event = CiEvent::JobFinished {
+            job_id: JobId::new(),
+            run_id: RunId::new(),
+            repo_id: RepoId::new(),
+            attempt: 2,
+            conclusion: JobConclusion::TimedOut,
+            exit_code: None,
+        };
+        let bytes = serde_json::to_vec(&event).unwrap();
+        let back: CiEvent = serde_json::from_slice(&bytes).unwrap();
+        check!(back == event);
     }
 }

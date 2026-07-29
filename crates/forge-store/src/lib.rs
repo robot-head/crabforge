@@ -36,6 +36,7 @@ use refinement_types::{Refinement, int};
 use tokio_postgres::{Client, NoTls};
 
 mod auth;
+mod ci;
 mod hooks;
 mod issues;
 pub mod migrate;
@@ -44,6 +45,7 @@ mod repos;
 mod users;
 
 pub use auth::{AccessToken, AuthStore, Session};
+pub use ci::{CiStore, JobRecord, RunRecord};
 pub use hooks::{DeliveryRecord, HookStore, WebhookRecord};
 pub use issues::{CommentRecord, Counters, IssueRecord, IssueStore};
 pub use pulls::{MergeCheck, Mergeable, PullRecord, PullStore, ReviewRecord};
@@ -302,6 +304,10 @@ impl Store {
 
     pub fn hooks(&self) -> HookStore<'_> {
         HookStore::new(&self.client)
+    }
+
+    pub fn ci(&self) -> CiStore<'_> {
+        CiStore::new(&self.client)
     }
 }
 
