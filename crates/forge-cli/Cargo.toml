@@ -19,6 +19,7 @@ anyhow.workspace = true
 clap.workspace = true
 crabka-client-admin.workspace = true
 forge-store.workspace = true
+forge-types.workspace = true
 forge-topics.workspace = true
 tokio.workspace = true
 tracing.workspace = true

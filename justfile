@@ -127,7 +127,7 @@ dev-up:
 # development there is nothing in it worth keeping.
 dev-reset:
     rm -rf "{{ dev }}"
-    @echo "removed {{ dev }} — run `just broker` to start fresh"
+    @echo 'removed {{ dev }} — run `just broker` to start fresh'
 
 # ── quality ──────────────────────────────────────────────────────────────────
 

@@ -1911,6 +1911,7 @@ dependencies = [
  "forge-store",
  "forge-testkit",
  "forge-topics",
+ "forge-types",
  "tokio",
  "tracing",
  "tracing-subscriber",

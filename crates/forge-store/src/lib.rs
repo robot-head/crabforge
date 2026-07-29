@@ -84,14 +84,92 @@ pub enum StoreError {
     Json(serde_json::Error),
     #[error("connecting to gres at {dsn}: {source}")]
     Connect {
+        /// Already redacted — see [`redact_dsn`]. This string reaches operator
+        /// output, so it must not be the raw connection string.
         dsn: String,
         #[source]
         source: tokio_postgres::Error,
     },
-    #[error(
-        "schema is at version {found:?} but this build expects {expected}; run `crabforge migrate`"
-    )]
+    #[error("gres at {dsn} did not answer within {}s", waited.as_secs_f32())]
+    ConnectTimeout {
+        /// Already redacted, as above.
+        dsn: String,
+        /// How long the attempt was actually given — which is not necessarily
+        /// the caller's budget, since a zero or tiny budget is floored so that
+        /// it still buys a real attempt.
+        waited: Duration,
+    },
+    #[error("{}", schema_mismatch_message(*found, *expected))]
     SchemaMismatch { found: Option<i64>, expected: i64 },
+}
+
+/// What to tell someone whose schema does not match their binary.
+///
+/// The remedy depends on the direction and the old message did not: it sent
+/// everyone to `crabforge migrate`, which for a database *ahead* of the binary
+/// has nothing to apply and no way to go back, so it would report success and
+/// leave the server refusing to start for the same reason as before.
+fn schema_mismatch_message(found: Option<i64>, expected: i64) -> String {
+    match found {
+        Some(found) if found > expected => format!(
+            "schema is at version {found} but this build expects {expected}; it was migrated by a \
+             newer build — deploy a build that matches, or reset the database and re-project"
+        ),
+        Some(found) => format!(
+            "schema is at version {found} but this build expects {expected}; run `crabforge migrate`"
+        ),
+        None => format!(
+            "no schema has been applied but this build expects version {expected}; run \
+             `crabforge migrate`"
+        ),
+    }
+}
+
+/// Floor on a single connection attempt inside [`Store::connect_with_retry`].
+const MIN_ATTEMPT: Duration = Duration::from_secs(1);
+
+/// A connection string with its password removed.
+///
+/// Every message naming a DSN goes somewhere a person will read it — a doctor
+/// report pasted into a ticket, a failed pre-start job in a CI log — so the
+/// password must not be in it. Both libpq spellings are handled: the
+/// `key=value` form's `password=` keyword, and the URI form's `user:pass@`.
+///
+/// Everything else is preserved, because the host, port and database name are
+/// exactly what makes such a message useful.
+pub fn redact_dsn(dsn: &str) -> String {
+    const MASK: &str = "password=<redacted>";
+
+    if let Some(scheme_end) = dsn.find("://") {
+        // URI form. The password is between the first ':' after the scheme and
+        // the '@' that ends the userinfo.
+        let (scheme, rest) = dsn.split_at(scheme_end + 3);
+        if let Some(at) = rest.find('@') {
+            let (userinfo, host) = rest.split_at(at);
+            let user = userinfo.split(':').next().unwrap_or(userinfo);
+            let redacted = if userinfo.contains(':') {
+                format!("{user}:<redacted>")
+            } else {
+                user.to_string()
+            };
+            return format!("{scheme}{redacted}{host}");
+        }
+        return dsn.to_string();
+    }
+
+    dsn.split_whitespace()
+        .map(|part| {
+            if part
+                .split_once('=')
+                .is_some_and(|(key, _)| key.eq_ignore_ascii_case("password"))
+            {
+                MASK
+            } else {
+                part
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// A connection to gres.
@@ -108,7 +186,7 @@ impl Store {
         let (client, connection) = tokio_postgres::connect(dsn, NoTls)
             .await
             .map_err(|source| StoreError::Connect {
-                dsn: dsn.to_string(),
+                dsn: redact_dsn(dsn),
                 source,
             })?;
 
@@ -130,19 +208,46 @@ impl Store {
     /// start can take a while on a busy forge. Retrying here means the forge
     /// starts alongside its database rather than crash-looping until it is
     /// ready.
+    ///
+    /// `within` is a real upper bound on the whole operation, including the
+    /// individual connect attempts. That takes saying, because it is not what
+    /// you get for free: `tokio_postgres::connect` has no timeout of its own
+    /// unless the DSN carries `connect_timeout`, so a host that blackholes
+    /// packets — a mistyped address, a dead network route — would otherwise sit
+    /// in one attempt for the kernel's TCP timeout of roughly two minutes,
+    /// whatever budget the caller asked for.
     pub async fn connect_with_retry(dsn: &str, within: Duration) -> Result<Self, StoreError> {
         let deadline = tokio::time::Instant::now() + within;
         let mut backoff = Duration::from_millis(100);
         loop {
-            match Self::connect(dsn).await {
-                Ok(store) => return Ok(store),
-                Err(e) if tokio::time::Instant::now() >= deadline => return Err(e),
-                Err(e) => {
-                    tracing::warn!(error = %e, "gres not ready; retrying");
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(Duration::from_secs(5));
-                }
+            // Each attempt is bounded by what is left of the budget, with a
+            // floor so that a zero or tiny budget still buys a real attempt
+            // rather than an instant timeout. The cost is that the call can
+            // overrun `within` by up to `MIN_ATTEMPT`, which beats "try once"
+            // meaning "do not try".
+            let attempt_budget = deadline
+                .saturating_duration_since(tokio::time::Instant::now())
+                .max(MIN_ATTEMPT);
+            let attempt = tokio::time::timeout(attempt_budget, Self::connect(dsn)).await;
+
+            let error = match attempt {
+                Ok(Ok(store)) => return Ok(store),
+                Ok(Err(e)) => e,
+                Err(_) => StoreError::ConnectTimeout {
+                    dsn: redact_dsn(dsn),
+                    waited: attempt_budget,
+                },
+            };
+
+            if tokio::time::Instant::now() >= deadline {
+                return Err(error);
             }
+            tracing::warn!(error = %error, "gres not ready; retrying");
+            // Never sleep past the deadline: the point of the budget is that a
+            // caller who asked for two seconds does not wait five.
+            let nap = backoff.min(deadline.saturating_duration_since(tokio::time::Instant::now()));
+            tokio::time::sleep(nap).await;
+            backoff = (backoff * 2).min(Duration::from_secs(5));
         }
     }
 
@@ -203,6 +308,58 @@ mod tests {
     use assert2::check;
 
     use super::*;
+
+    #[test]
+    fn a_password_is_removed_from_a_dsn_but_nothing_else_is() {
+        // Both libpq spellings, because a message naming the DSN is exactly the
+        // text an operator pastes into a ticket.
+        check!(
+            redact_dsn("host=db port=5433 user=forge password=hunter2 dbname=crab")
+                == "host=db port=5433 user=forge password=<redacted> dbname=crab"
+        );
+        check!(
+            redact_dsn("postgresql://forge:hunter2@db:5433/crab")
+                == "postgresql://forge:<redacted>@db:5433/crab"
+        );
+
+        // The host, port and database survive — redacting them would leave a
+        // message that says nothing.
+        let redacted = redact_dsn("host=db port=5433 user=forge password=hunter2 dbname=crab");
+        check!(redacted.contains("host=db"));
+        check!(redacted.contains("port=5433"));
+        check!(redacted.contains("dbname=crab"));
+        check!(!redacted.contains("hunter2"));
+    }
+
+    #[test]
+    fn a_dsn_without_a_password_is_left_alone() {
+        let plain = "host=127.0.0.1 port=5433 user=forge dbname=crab";
+        check!(redact_dsn(plain) == plain);
+        check!(redact_dsn("postgresql://forge@db/crab") == "postgresql://forge@db/crab");
+        check!(redact_dsn("") == "");
+    }
+
+    #[test]
+    fn a_password_keyword_is_matched_however_it_is_cased() {
+        // libpq keywords are case-insensitive, and a check that missed
+        // `PASSWORD=` would leak exactly as badly as no check at all.
+        check!(!redact_dsn("host=db PASSWORD=hunter2").contains("hunter2"));
+        check!(!redact_dsn("host=db PassWord=hunter2").contains("hunter2"));
+        // But a keyword that merely ends in "password" is a different setting.
+        check!(redact_dsn("host=db sslpassword=x").contains("sslpassword=x"));
+    }
+
+    #[test]
+    fn the_schema_mismatch_message_points_the_right_way() {
+        // Behind: migrating is the fix.
+        check!(schema_mismatch_message(Some(1), 2).contains("crabforge migrate"));
+        check!(schema_mismatch_message(None, 1).contains("crabforge migrate"));
+        // Ahead: it is not, and saying so is the whole point — migrate has
+        // nothing to apply and would report success.
+        let ahead = schema_mismatch_message(Some(3), 1);
+        check!(!ahead.contains("crabforge migrate"));
+        check!(ahead.contains("newer build"));
+    }
 
     #[test]
     fn page_sizes_are_bounded_in_both_directions() {

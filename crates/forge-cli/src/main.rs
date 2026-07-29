@@ -66,9 +66,15 @@ async fn main() -> Result<()> {
         Command::Bootstrap => bootstrap::run(&cli.bootstrap)
             .await
             .context("bootstrap failed")?,
-        Command::Migrate { wait } => migrate::run(&cli.dsn, Duration::from_secs(wait))
-            .await
-            .context("migrate failed")?,
+        Command::Migrate { wait } => {
+            // Clamped because the budget becomes `Instant::now() + wait`, and a
+            // large enough value overflows and panics — a stack trace is a poor
+            // answer to a fat-fingered `--wait`.
+            let wait = Duration::from_secs(wait.min(migrate::MAX_WAIT_SECS));
+            migrate::run(&cli.dsn, wait)
+                .await
+                .context("migrate failed")?
+        }
         Command::Doctor => {
             let report = doctor::run(&cli.bootstrap, &cli.dsn).await;
             report.print();
