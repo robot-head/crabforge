@@ -135,3 +135,37 @@ fn discovery_reads_the_commit_it_is_given_and_not_the_branch_tip() {
     let at_head = discover(&cache, "HEAD");
     check!(at_head.workflows[0].workflow.jobs.contains_key("b"));
 }
+
+#[test]
+fn the_workflow_in_the_readme_is_one_the_parser_accepts() {
+    // Extracted from the README rather than copied out of it, so the two cannot
+    // drift. A documented example that no longer works is worse than none: it
+    // is the first thing a new user types.
+    let readme = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md"),
+    )
+    .expect("the README should be readable from the crate");
+
+    let yaml = readme
+        .split("```yaml")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .expect("the README should contain a yaml example");
+
+    // The fence opens with the file's path as a comment; the parser sees that
+    // as an ordinary YAML comment, which is exactly what a user copying the
+    // block would get.
+    let workflow = forge_ci::Workflow::parse(".crabforge/workflows/build.yml", yaml)
+        .expect("the README's workflow should parse");
+
+    check!(workflow.on.covers("push"), "the example should run on push");
+    check!(
+        !workflow.jobs.is_empty(),
+        "the example should describe a job"
+    );
+    // And the directory the README names is the one discovery looks in.
+    check!(
+        yaml.contains(WORKFLOW_DIR),
+        "the example's path comment should name {WORKFLOW_DIR}"
+    );
+}

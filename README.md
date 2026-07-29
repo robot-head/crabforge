@@ -15,15 +15,17 @@ outside it.
 - **gres is the only queryable store.** Read models are projected into SQL tables
   whose durability, in turn, is a topic on the same broker.
 - **Local disk is a cache.** Repository working state and gres's LSM are both
-  disposable and rebuildable from the log. There is a drill for this
-  (see `docs/PLAN.md`, M7): delete every cache and the database, restart, and
-  the forge comes back.
+  disposable and rebuildable from the log. That is not a claim, it is a test:
+  `forge-projector/tests/disaster.rs` drops every table — including the
+  migration ledger and the reader cursors — replays the log, and compares the
+  recovered forge against the original.
 
 No external Postgres, Redis, or object store.
 
 ## Status
 
-Early. See [docs/PLAN.md](docs/PLAN.md) for the architecture and milestone plan.
+The planned scope is built. See [docs/PLAN.md](docs/PLAN.md) for the
+architecture and the reasoning behind it.
 
 | Milestone | State |
 |---|---|
@@ -33,11 +35,21 @@ Early. See [docs/PLAN.md](docs/PLAN.md) for the architecture and milestone plan.
 | M3 git write path — `git push`, quarantine, reference compare-and-swap | done |
 | M4 browsing, issues, authentication, web UI | done |
 | M5 pull requests — open, review, merge | done |
-| M6 webhooks and Crab Actions CI | next |
-| M7 observability, hardening, disaster drill | planned |
+| M6 webhooks and Crab Actions CI | done |
+| M7 observability, hardening, disaster drill | done |
 
-Working today: register a user, create a repository, read both back — with the
-log as the only source of truth and gres as a rebuildable projection of it.
+481 tests, none of them mocked at the boundaries that matter: they run against a
+real crabka broker, a real `crabka-gres`, the real `git` binary, and a real
+Docker daemon.
+
+Not built, and deliberately so: the Kubernetes deployment path, scale-to-zero,
+and multi-broker clustering. Those are phase two in `docs/PLAN.md` and depend on
+crabka's operator rather than on anything here.
+
+## Using it
+
+All of this works against a single-node broker on a laptop —
+[Getting started](#getting-started) brings one up:
 
 ```bash
 curl -X POST localhost:7000/api/v1/users \
@@ -56,13 +68,61 @@ cd Hello-World && git push origin main
 
 Or open <http://localhost:7000> and use it: register, browse a repository with
 syntax highlighting and a rendered README, read commit history, file and discuss
-issues, open a pull request and merge it.
+issues, open a pull request, see its checks, and merge it.
 
 Clones are served by replaying the repository's object topic into a local cache
 and handing that to `git upload-pack`. Delete the cache and clone again — it is
 rebuilt from the log. Pushes write objects to the topic and move references
 through a compare-and-swap held by the command service, so two people pushing
 from the same commit cannot silently overwrite each other.
+
+## Crab Actions
+
+Commit a workflow and pushing runs it:
+
+```yaml
+# .crabforge/workflows/build.yml
+name: build
+on: [push]
+jobs:
+  test:
+    runs-on: rust:1.97
+    steps:
+      - run: cargo test
+```
+
+Workflows are read at **the commit that was pushed**, never at the branch tip —
+otherwise a second push landing mid-plan would change what the first one runs,
+which is both a wrong label and a way to execute unreviewed code.
+
+Each job runs in its own container with no network, no capabilities, no
+privileges, a read-only root filesystem, and nothing of the host's disk but its
+own workspace. It does not run as root. Every one of those has a test that fails
+if the flag is dropped, including one proving the runner's own environment —
+where the broker address and database credentials live — does not leak in.
+
+Jobs are handed out through a KIP-932 share group, so runners scale by starting
+more of them. That needs a broker formatted with the feature on:
+
+```bash
+crabka format --feature share.version=1 ...   # `just format` already does this
+```
+
+A broker without it gets a clear error and a forge that serves git without CI,
+rather than one that silently never runs anything.
+
+## Webhooks
+
+Per-repository subscriptions with exact or prefix matching (`issue.*`), signed
+with `X-Hub-Signature-256` over the exact bytes sent, carrying CloudEvents
+attributes alongside the GitHub-shaped headers integrations already read.
+Retries back off and exhaust into a dead-letter topic; every attempt is
+recorded, because "why did my integration stop working" is unanswerable from
+successes alone.
+
+Targets are resolved before they are called and refused if they land anywhere
+private — a user-supplied URL fetched from inside the forge's network is a
+request-forgery primitive handed out as a feature.
 
 ## Getting started
 
@@ -105,12 +165,27 @@ Gaps we hit in crabka's Postgres engine are tracked in
 force are tagged `TODO(gres:<feature>)` in the storage layer so they can be
 deleted when the feature lands.
 
+## Observability
+
+Every service calls `crabka_telemetry::init`, which gives structured logs, OTel
+spans and an OTLP logs bridge from the standard `OTEL_*` variables — and
+degrades to stderr when none are set, so a laptop needs no collector.
+
+The forge does not link crabka's metrics, traces or profiles crates: they carry
+a git-pinned DataFusion and a locked arrow major, which would put a large and
+volatile dependency tree in every binary to gain nothing. The observability
+services are reached over the wire, like any other OTLP consumer.
+
 ## Verification
 
 Three layers beyond the compiler: units carried in the type (`uom`), refinement
 types that make out-of-range values unconstructible (`refinement-types`), and
-integration tests against a real broker, a real gres, and the real `git` binary.
-See [docs/verification.md](docs/verification.md).
+integration tests against a real broker, a real gres, the real `git` binary and
+a real Docker daemon. See [docs/verification.md](docs/verification.md).
+
+Tests that need `crabka-gres` or Docker skip themselves when it is absent rather
+than failing — a red suite should tell you about the code, not about the
+machine.
 
 ## License
 
