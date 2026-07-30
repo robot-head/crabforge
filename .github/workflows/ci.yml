@@ -27,7 +27,7 @@ jobs:
       # Nothing here names a Rust version or a component: rust-toolchain.toml
       # pins both, and a workflow that repeated them would eventually disagree
       # with it.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -48,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -68,7 +68,7 @@ jobs:
           rev=$(grep -m1 -oE 'crabka\?branch=main#[0-9a-f]+' Cargo.lock | cut -d'#' -f2)
           test -n "$rev" || { echo "no crabka revision in Cargo.lock" >&2; exit 1; }
           echo "rev=$rev" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         id: gres
         with:
           path: ~/.local/bin/crabka-gres
