@@ -90,4 +90,22 @@ collision between the object writer and the command service.
 The git tests go further and drive the actual `git` binary — clone, push, fsck —
 because git is the only judge of whether a git server is correct.
 
+The CI tests do the same with a real Docker daemon and a real Kubernetes
+cluster. Both matter for the same reason: every isolation property the sandboxes
+claim is a flag that can be silently dropped, and a test that only checks a
+command's output would pass either way. `forge-ci/tests/kubernetes.rs` runs in a
+namespace labelled `pod-security.kubernetes.io/enforce: restricted` — the label
+`deploy/k8s/00-namespaces.yaml` puts on the real one — so a manifest that loses
+a hardening field is rejected by admission during the test rather than on the
+cluster it was written for. `kind create cluster` is enough.
+
+That layer has also earned its keep against the deployment manifests themselves.
+`kubectl apply --dry-run=server` validates them against crabka's and KEDA's
+actual CRD schemas, which is how `KafkaNodePool.replicas` turned out to be
+pinned to exactly 1 — a three-broker cluster is three node pools, not one pool
+of three, and no amount of reading the operator's documentation had said so.
+
+Tests that need `crabka-gres`, Docker or a cluster skip themselves when it is
+absent. A red suite should tell you about the code, not about the machine.
+
 Run everything with `just test`.

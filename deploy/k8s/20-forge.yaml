@@ -1,0 +1,199 @@
+# The forge itself.
+#
+# One Deployment, one replica, and the replica count is not an oversight: this
+# process holds the command service, which is a fenced single writer. A second
+# copy does not share the work — `init_transactions` bumps the producer epoch
+# and fences the first, which then stops. That is the correct behaviour (it is
+# what makes a split brain impossible) but it means scaling this tier is a
+# design change, not a number. `strategy: Recreate` for the same reason: a
+# rolling update would briefly run two, and the old one would be fenced mid-push.
+#
+# What *does* scale is in 30-runners.yaml.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crabforge
+  namespace: crabforge
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crabforge
+  namespace: crabforge
+data:
+  CRABFORGE_BOOTSTRAP: "forge-kafka-bootstrap.crabforge.svc:9092"
+  CRABFORGE_LISTEN: "0.0.0.0:7000"
+  CRABFORGE_ADMIN_LISTEN: "0.0.0.0:7101"
+  CRABFORGE_CACHE: "/var/lib/crabforge/cache"
+  CRABFORGE_SECURE_COOKIES: "true"
+  # CI runs in its own tier; see 30-runners.yaml.
+  CRABFORGE_CI_RUNNERS: "0"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://alloy.observability.svc:4317"
+---
+# Topics and schema, before anything serves. Both are idempotent, so this runs
+# on every deploy rather than once — which is what makes adding a topic or a
+# migration a normal deploy instead of a runbook.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: crabforge-bootstrap
+  namespace: crabforge
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: crabforge-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: crabforge
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+        - name: bootstrap
+          image: ghcr.io/crabforge/crabforge:latest
+          command: ["/bin/sh", "-c"]
+          # `bootstrap` waits for the broker on its own; `migrate` waits for a
+          # cold gres, which replays its whole write-ahead log before it
+          # listens. Neither needs an init container to sequence it.
+          args:
+            - crabforge bootstrap && crabforge migrate
+          envFrom:
+            - configMapRef:
+                name: crabforge
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: forge-gres-password
+                  key: password
+            - name: CRABFORGE_DSN
+              value: "host=forge-gres.crabforge.svc port=6432 user=forge dbname=crab"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crabforge
+  namespace: crabforge
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: crabforge
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: crabforge
+    spec:
+      serviceAccountName: crabforge
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+        - name: server
+          image: ghcr.io/crabforge/crabforge:latest
+          args: ["crabforge-server"]
+          envFrom:
+            - configMapRef:
+                name: crabforge
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: forge-gres-password
+                  key: password
+            - name: CRABFORGE_DSN
+              value: "host=forge-gres.crabforge.svc port=6432 user=forge dbname=crab"
+          ports:
+            - name: http
+              containerPort: 7000
+            - name: admin
+              containerPort: 7101
+          # Liveness never touches a dependency: restarting every forge pod
+          # during a broker outage fixes nothing and removes the process that
+          # would have recovered. Readiness does, so traffic stops instead.
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+          # Generous: a cold gres replays its whole write-ahead log before it
+          # accepts connections, and the server waits for it.
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            failureThreshold: 60
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: cache
+              mountPath: /var/lib/crabforge/cache
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # emptyDir, deliberately. Every byte here is a bare git repository
+        # rebuilt from the object topics on demand, so it survives nothing and
+        # needs to survive nothing — losing it costs a re-hydration on the next
+        # clone. A PersistentVolumeClaim here would be a claim that local disk
+        # holds something, which is the thing this design says it does not.
+        - name: cache
+          emptyDir:
+            sizeLimit: 50Gi
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crabforge
+  namespace: crabforge
+spec:
+  selector:
+    app.kubernetes.io/name: crabforge
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# The admin port on its own Service, so a scrape can reach it and an Ingress
+# cannot. `/metrics` enumerates repository names and `/debug/pprof` dumps the
+# process's stacks; neither belongs on the front door.
+apiVersion: v1
+kind: Service
+metadata:
+  name: crabforge-admin
+  namespace: crabforge
+  labels:
+    app.kubernetes.io/name: crabforge-admin
+spec:
+  selector:
+    app.kubernetes.io/name: crabforge
+  ports:
+    - name: admin
+      port: 7101
+      targetPort: admin

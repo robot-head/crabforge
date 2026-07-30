@@ -1,0 +1,53 @@
+# Knative `eventing-kafka-broker`, configured for a crabka cluster.
+#
+# Two settings here are not defaults, and both are because crabka is stricter
+# than Apache Kafka in ways that produce an unhelpful error rather than a
+# fallback.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-broker-config
+  namespace: knative-eventing
+data:
+  bootstrap.servers: "forge-kafka-bootstrap.crabforge.svc:9092"
+
+  # Explicit, because crabka rejects `num_partitions = -1` (the "use the broker
+  # default" sentinel) outright rather than substituting a default. There is no
+  # broker-level default to fall back on: crabka has no dynamic broker configs,
+  # so every topic states its own shape.
+  default.topic.partitions: "10"
+  default.topic.replication.factor: "3"
+
+  # Crabka's topic-config whitelist is fifteen keys, and an unknown one is
+  # rejected with INVALID_CONFIG — the whole CreateTopics call fails rather than
+  # the key being ignored. `retention.ms` and `segment.bytes` are on the list;
+  # `min.cleanable.dirty.ratio`, `segment.ms` and `max.message.bytes` are not,
+  # so do not add them here however familiar they look.
+  default.topic.config.retention.ms: "604800000"
+  default.topic.config.segment.bytes: "67108864"
+---
+# The data plane's own consumer/producer settings. Nothing crabka-specific;
+# included so the whole configuration is in one place rather than half of it
+# being an upstream default someone has to look up.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-kafka-broker-data-plane
+  namespace: knative-eventing
+data:
+  config-kafka-broker-producer.properties: |
+    bootstrap.servers=forge-kafka-bootstrap.crabforge.svc:9092
+    key.serializer=org.apache.kafka.common.serialization.StringSerializer
+    value.serializer=io.cloudevents.kafka.CloudEventSerializer
+    acks=all
+  config-kafka-broker-consumer.properties: |
+    bootstrap.servers=forge-kafka-bootstrap.crabforge.svc:9092
+    key.deserializer=org.apache.kafka.common.serialization.StringDeserializer
+    value.deserializer=io.cloudevents.kafka.CloudEventDeserializer
+    # Crabka implements both the classic and the KIP-848 protocols. Classic is
+    # the older and more heavily exercised of the two upstream; switch this
+    # only after the round-trip check in validate.sh passes with it.
+    group.protocol=classic
+    enable.auto.commit=false
+    auto.offset.reset=latest

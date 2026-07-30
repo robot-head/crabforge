@@ -149,6 +149,12 @@ reads the top row by `ORDER BY … DESC LIMIT 1` instead, which needs no aggrega
 and is a plain indexed read. Worth knowing before reaching for `max`, `sum` or
 `avg` anywhere else. Tagged `TODO(gres:aggregate-types)`.
 
+**Narrower than it first looked.** `count(*)` is fine — it comes back as `i64`,
+with or without a `WHERE`, and `count(1)` too. So the gap is aggregates *over an
+`int8` column*, not the aggregate machinery. `CiStore::queued_jobs`, which the
+CI autoscaler reads, is a plain `SELECT count(*) … WHERE status = 'queued'` and
+needs no workaround.
+
 ### Not a gap: microsecond timestamps
 
 `timestamptz` stores microseconds, so nanosecond-precision Rust timestamps do
