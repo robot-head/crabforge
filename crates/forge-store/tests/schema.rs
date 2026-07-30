@@ -239,19 +239,19 @@ async fn a_cursor_is_per_topic_and_partition() {
         return;
     };
     store
-        .cursors()
+        .cursors(forge_store::PROJECTOR)
         .set_applied_offset("forge.events.repos", 5)
         .await
         .unwrap();
     store
-        .cursors()
+        .cursors(forge_store::PROJECTOR)
         .set_applied_offset("forge.events.issues", 9)
         .await
         .unwrap();
 
     check!(
         store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .applied_offset("forge.events.repos")
             .await
             .unwrap()
@@ -259,7 +259,7 @@ async fn a_cursor_is_per_topic_and_partition() {
     );
     check!(
         store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .applied_offset("forge.events.issues")
             .await
             .unwrap()
@@ -268,13 +268,13 @@ async fn a_cursor_is_per_topic_and_partition() {
 
     // Re-recording the same topic advances rather than duplicating.
     store
-        .cursors()
+        .cursors(forge_store::PROJECTOR)
         .set_applied_offset("forge.events.repos", 11)
         .await
         .unwrap();
     check!(
         store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .applied_offset("forge.events.repos")
             .await
             .unwrap()
@@ -388,7 +388,7 @@ async fn the_projector_cursor_persists_and_advances() {
     let Some((_gres, store)) = migrated_store().await else {
         return;
     };
-    let cursors = store.cursors();
+    let cursors = store.cursors(forge_store::PROJECTOR);
 
     // A topic never projected starts at the beginning of the log.
     check!(cursors.applied_offset("forge.events.repos").await.unwrap() == 0);
@@ -421,7 +421,7 @@ async fn a_transaction_rolls_back_rows_and_cursor_together() {
     store.client().batch_execute("BEGIN").await.unwrap();
     store.users().upsert(&user).await.unwrap();
     store
-        .cursors()
+        .cursors(forge_store::PROJECTOR)
         .set_applied_offset("forge.events.users", 7)
         .await
         .unwrap();
@@ -433,7 +433,7 @@ async fn a_transaction_rolls_back_rows_and_cursor_together() {
     );
     check!(
         store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .applied_offset("forge.events.users")
             .await
             .unwrap()
@@ -840,4 +840,155 @@ async fn webhook_events_survive_the_array_column() {
     check!(found.wants("issue.opened"));
     check!(found.wants("git.ref_updated"));
     check!(!found.wants("pr.opened"));
+}
+
+/// A queued job of `run_id`, for the CI tests below.
+fn sample_job(run_id: &str, name: &str) -> forge_store::JobRecord {
+    let now = forge_types::now();
+    forge_store::JobRecord {
+        job_id: forge_types::JobId::new().to_string(),
+        run_id: run_id.to_string(),
+        repo_id: "repo-1".into(),
+        name: name.to_string(),
+        image: "ubuntu:24.04".into(),
+        status: "queued".into(),
+        attempt: 0,
+        exit_code: None,
+        log_offset: None,
+        created_at: now,
+        updated_at: now,
+        started_at: None,
+        finished_at: None,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn only_one_runner_can_claim_a_job() {
+    // The guarantee that makes at-least-once job delivery safe. Two runners can
+    // be handed the same job — that is what at-least-once means — and exactly
+    // one of them must get to run it. Without this, a push would build twice
+    // and two runners would fight over one log.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let job = sample_job("run-1", "test");
+    store.ci().upsert_job(&job).await.unwrap();
+
+    let now = forge_types::now();
+    let first = store
+        .ci()
+        .claim_job(&job.job_id, 1, 100, now)
+        .await
+        .unwrap();
+    let second = store
+        .ci()
+        .claim_job(&job.job_id, 2, 200, now)
+        .await
+        .unwrap();
+
+    check!(first, "the first runner should get the job");
+    check!(!second, "the second runner must not");
+
+    let stored = store.ci().job_by_id(&job.job_id).await.unwrap().unwrap();
+    check!(stored.status == "running");
+    check!(stored.attempt == 1, "the winner's attempt should stand");
+    check!(stored.log_offset == Some(100), "and its log offset");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_finished_job_is_not_restarted_by_a_redelivery() {
+    // A rerun is a new job, not a second go at this one. Restarting a finished
+    // job would blank a result someone may already have merged on.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let job = sample_job("run-1", "test");
+    store.ci().upsert_job(&job).await.unwrap();
+    let now = forge_types::now();
+    store.ci().claim_job(&job.job_id, 1, 0, now).await.unwrap();
+    store
+        .ci()
+        .finish_job(&job.job_id, 1, "success", Some(0), now)
+        .await
+        .unwrap();
+
+    let reclaimed = store.ci().claim_job(&job.job_id, 2, 0, now).await.unwrap();
+    check!(!reclaimed, "a finished job was restarted");
+
+    let stored = store.ci().job_by_id(&job.job_id).await.unwrap().unwrap();
+    check!(stored.status == "success");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_zombie_runner_cannot_overwrite_the_live_attempt() {
+    // The other half of at-least-once. A runner declared dead may still be
+    // alive and about to report; its verdict is about a run nobody is waiting
+    // for. Applying it would replace the live attempt's result — and since the
+    // zombie is usually the one that was stuck, that means overwriting a real
+    // answer with a stale one.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    let job = sample_job("run-1", "test");
+    store.ci().upsert_job(&job).await.unwrap();
+    let now = forge_types::now();
+
+    // Attempt 1 claims it, then is presumed lost and the job is redelivered.
+    store.ci().claim_job(&job.job_id, 1, 0, now).await.unwrap();
+    store
+        .ci()
+        .finish_job(&job.job_id, 1, "failed", Some(1), now)
+        .await
+        .unwrap();
+
+    // A second attempt takes over and succeeds. (Reset to queued as the
+    // reconciler would, then claim.)
+    let mut requeued = store.ci().job_by_id(&job.job_id).await.unwrap().unwrap();
+    requeued.status = "queued".into();
+    store.ci().upsert_job(&requeued).await.unwrap();
+    check!(store.ci().claim_job(&job.job_id, 2, 0, now).await.unwrap());
+    store
+        .ci()
+        .finish_job(&job.job_id, 2, "success", Some(0), now)
+        .await
+        .unwrap();
+
+    // Now the zombie reports on attempt 1. It must not be heard.
+    let applied = store
+        .ci()
+        .finish_job(&job.job_id, 1, "failed", Some(1), now)
+        .await
+        .unwrap();
+    check!(!applied, "a stale attempt was allowed to report");
+
+    let stored = store.ci().job_by_id(&job.job_id).await.unwrap().unwrap();
+    check!(
+        stored.status == "success",
+        "the live result was overwritten"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_jobs_of_a_run_cannot_share_a_name() {
+    // Job names come from a YAML map so they are unique by construction, and
+    // the constraint says so — a duplicate would make "which job failed?"
+    // ambiguous in every UI that shows one.
+    let Some((_gres, store)) = migrated_store().await else {
+        return;
+    };
+    store
+        .ci()
+        .upsert_job(&sample_job("run-1", "test"))
+        .await
+        .unwrap();
+
+    let clash = store.ci().upsert_job(&sample_job("run-1", "test")).await;
+    assert!(let Err(StoreError::Sql(_)) = clash);
+
+    // The same name in a different run is fine, and is the common case.
+    store
+        .ci()
+        .upsert_job(&sample_job("run-2", "test"))
+        .await
+        .unwrap();
 }

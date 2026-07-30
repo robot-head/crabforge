@@ -31,14 +31,17 @@
 use std::time::Duration;
 
 use forge_bus::{TailError, Tailer};
-use forge_events::{IssueEvent, PrEvent, RepoEvent, UserEvent, decode_raw};
+use forge_events::{CiEvent, IssueEvent, PrEvent, RepoEvent, UserEvent, decode_raw};
 use forge_store::{RepoRecord, Store, StoreError, UserRecord};
 use forge_types::topics;
 use tokio::sync::watch;
 
 mod apply;
 
-pub use apply::{apply_issue_event, apply_pr_event, apply_repo_event, apply_user_event};
+pub use apply::{
+    apply_ci_event, apply_issue_event, apply_pr_event, apply_repo_event, apply_user_event,
+    run_conclusion,
+};
 
 /// How long to wait for new records before looping again.
 const POLL_WAIT_MS: i32 = 500;
@@ -70,7 +73,10 @@ impl Projector {
     pub async fn open(bootstrap: &str, topic: &str, store: Store) -> Result<Self, ProjectorError> {
         // Resume from gres, not from a broker-side consumer group offset: the
         // cursor has to move atomically with the rows, so it lives with them.
-        let resume_from = store.cursors().applied_offset(topic).await?;
+        let resume_from = store
+            .cursors(forge_store::PROJECTOR)
+            .applied_offset(topic)
+            .await?;
         let tailer = Tailer::open_at(bootstrap, topic, resume_from).await?;
         let (applied, _) = watch::channel(resume_from - 1);
         tracing::info!(topic, resume_from, "projector opened");
@@ -97,6 +103,14 @@ impl Projector {
             let batch = self.tailer.next_batch(0).await?;
             if batch.records.is_empty() {
                 if batch.caught_up {
+                    // Caught up, so the lag is zero whatever the age of the last
+                    // event — see `forge_metrics::record_projection`.
+                    forge_metrics::record_projection(
+                        self.tailer.topic(),
+                        0,
+                        batch.next_offset,
+                        None,
+                    );
                     return Ok(total);
                 }
                 // The batch held only invisible records (control or aborted
@@ -112,10 +126,14 @@ impl Projector {
                 .map_err(StoreError::Sql)?;
 
             let mut applied = 0;
+            let mut newest = None;
             for record in &batch.records {
                 match self.apply_record(record).await {
-                    Ok(true) => applied += 1,
-                    Ok(false) => {}
+                    Ok(Some(occurred_at)) => {
+                        applied += 1;
+                        newest = Some(occurred_at);
+                    }
+                    Ok(None) => {}
                     Err(e) => {
                         // Roll back so the cursor does not advance past an event
                         // we failed to apply; the batch is retried on the next
@@ -128,7 +146,7 @@ impl Projector {
 
             if let Err(e) = self
                 .store
-                .cursors()
+                .cursors(forge_store::PROJECTOR)
                 .set_applied_offset(self.tailer.topic(), batch.next_offset)
                 .await
             {
@@ -141,6 +159,12 @@ impl Projector {
                 .map_err(StoreError::Sql)?;
 
             self.publish_applied(batch.next_offset - 1);
+            forge_metrics::record_projection(
+                self.tailer.topic(),
+                applied,
+                batch.next_offset,
+                newest.map(age_seconds),
+            );
             total += applied;
         }
     }
@@ -167,15 +191,24 @@ impl Projector {
             .batch_execute("BEGIN")
             .await
             .map_err(StoreError::Sql)?;
+        let mut applied = 0;
+        let mut newest = None;
         for record in &batch.records {
-            if let Err(e) = self.apply_record(record).await {
-                let _ = client.batch_execute("ROLLBACK").await;
-                return Err(e);
+            match self.apply_record(record).await {
+                Ok(Some(occurred_at)) => {
+                    applied += 1;
+                    newest = Some(occurred_at);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    let _ = client.batch_execute("ROLLBACK").await;
+                    return Err(e);
+                }
             }
         }
         if let Err(e) = self
             .store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .set_applied_offset(self.tailer.topic(), batch.next_offset)
             .await
         {
@@ -187,19 +220,46 @@ impl Projector {
             .await
             .map_err(StoreError::Sql)?;
         self.publish_applied(batch.next_offset - 1);
+        forge_metrics::record_projection(
+            self.tailer.topic(),
+            applied,
+            batch.next_offset,
+            newest.map(age_seconds),
+        );
         Ok(())
     }
 
-    /// Apply one record. Returns whether it was a recognized event.
+    /// Apply one record. Returns when the event occurred, if it was one this
+    /// build recognizes.
     async fn apply_record(
         &self,
         record: &forge_bus::FetchedRecord,
-    ) -> Result<bool, ProjectorError> {
+    ) -> Result<Option<time::OffsetDateTime>, ProjectorError> {
+        // Continue the trace the event was written in rather than starting a
+        // new one, so a request that returned "saving…" and the projection that
+        // eventually satisfied it are the same trace.
+        //
+        // `instrument` rather than `span.enter()`: this future awaits, and a
+        // guard held across an await attributes whatever else the executor runs
+        // in the meantime to this span.
+        let span = tracing::info_span!(
+            "project",
+            topic = self.tailer.topic(),
+            offset = record.offset
+        );
+        forge_bus::join_trace(&span, record);
+        tracing::Instrument::instrument(self.apply_decoded(record), span).await
+    }
+
+    async fn apply_decoded(
+        &self,
+        record: &forge_bus::FetchedRecord,
+    ) -> Result<Option<time::OffsetDateTime>, ProjectorError> {
         let envelope = match decode_raw(record.value.as_deref()) {
             Ok(envelope) => envelope,
             Err(e) => {
                 tracing::warn!(offset = record.offset, error = %e, "skipping undecodable record");
-                return Ok(false);
+                return Ok(None);
             }
         };
 
@@ -208,7 +268,7 @@ impl Projector {
             match envelope.parse::<UserEvent>() {
                 Ok(parsed) => {
                     apply_user_event(&self.store, &parsed.payload, parsed.occurred_at).await?;
-                    return Ok(true);
+                    return Ok(Some(parsed.occurred_at));
                 }
                 Err(e) => {
                     // Forward compatibility: an event this build does not know
@@ -225,7 +285,7 @@ impl Projector {
             match envelope.parse::<IssueEvent>() {
                 Ok(parsed) => {
                     apply_issue_event(&self.store, &parsed.payload, parsed.occurred_at).await?;
-                    return Ok(true);
+                    return Ok(Some(parsed.occurred_at));
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -239,7 +299,7 @@ impl Projector {
             match envelope.parse::<PrEvent>() {
                 Ok(parsed) => {
                     apply_pr_event(&self.store, &parsed.payload, parsed.occurred_at).await?;
-                    return Ok(true);
+                    return Ok(Some(parsed.occurred_at));
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -249,11 +309,25 @@ impl Projector {
                     );
                 }
             }
+        } else if topic == topics::EVENTS_CI {
+            match envelope.parse::<CiEvent>() {
+                Ok(parsed) => {
+                    apply_ci_event(&self.store, &parsed.payload, parsed.occurred_at).await?;
+                    return Ok(Some(parsed.occurred_at));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        event_type = %envelope.event_type,
+                        error = %e,
+                        "skipping unrecognized CI event"
+                    );
+                }
+            }
         } else if topic == topics::EVENTS_REPOS {
             match envelope.parse::<RepoEvent>() {
                 Ok(parsed) => {
                     apply_repo_event(&self.store, &parsed.payload, parsed.occurred_at).await?;
-                    return Ok(true);
+                    return Ok(Some(parsed.occurred_at));
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -264,12 +338,12 @@ impl Projector {
                 }
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     async fn commit_cursor(&self, offset: i64) -> Result<(), ProjectorError> {
         self.store
-            .cursors()
+            .cursors(forge_store::PROJECTOR)
             .set_applied_offset(self.tailer.topic(), offset)
             .await?;
         self.publish_applied(offset - 1);
@@ -286,6 +360,14 @@ impl Projector {
             }
         });
     }
+}
+
+/// How long ago `at` was, in seconds.
+///
+/// Negative when the writer's clock runs ahead of this one; the metric clamps
+/// rather than this, so the sign survives for anything else that wants it.
+fn age_seconds(at: time::OffsetDateTime) -> f64 {
+    (forge_types::now() - at).as_seconds_f64()
 }
 
 /// Wait until `applied` reaches `offset`.

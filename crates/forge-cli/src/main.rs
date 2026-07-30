@@ -37,7 +37,16 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Provision every topic the forge needs. Safe to re-run.
-    Bootstrap,
+    Bootstrap {
+        /// Copies of every partition.
+        ///
+        /// One suits the single broker a laptop runs. A multi-broker cluster
+        /// wants one per broker, or losing a broker's disk loses the only copy
+        /// of whatever it held — which here is event history and git objects.
+        /// It cannot exceed the number of brokers.
+        #[arg(long, env = "CRABFORGE_TOPIC_REPLICATION", default_value_t = 1)]
+        replication_factor: i32,
+    },
     /// Apply any pending schema migrations. Safe to re-run.
     Migrate {
         /// Seconds to wait for gres to accept connections.
@@ -63,12 +72,20 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Command::Bootstrap => bootstrap::run(&cli.bootstrap)
-            .await
-            .context("bootstrap failed")?,
-        Command::Migrate { wait } => migrate::run(&cli.dsn, Duration::from_secs(wait))
-            .await
-            .context("migrate failed")?,
+        Command::Bootstrap { replication_factor } => {
+            bootstrap::run(&cli.bootstrap, replication_factor)
+                .await
+                .context("bootstrap failed")?
+        }
+        Command::Migrate { wait } => {
+            // Clamped because the budget becomes `Instant::now() + wait`, and a
+            // large enough value overflows and panics — a stack trace is a poor
+            // answer to a fat-fingered `--wait`.
+            let wait = Duration::from_secs(wait.min(migrate::MAX_WAIT_SECS));
+            migrate::run(&cli.dsn, wait)
+                .await
+                .context("migrate failed")?
+        }
         Command::Doctor => {
             let report = doctor::run(&cli.bootstrap, &cli.dsn).await;
             report.print();

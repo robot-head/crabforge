@@ -26,6 +26,35 @@ async fn get(app: axum::Router, path: &str) -> (StatusCode, serde_json::Value) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_runner_answers_probes_and_serves_nothing_else() {
+    // `--role=runner` exists so the CI tier can scale from zero, which means
+    // its pods are the ones most likely to be reachable from somewhere
+    // unexpected. It has no business serving the API, and an accidental
+    // `.merge(api::router())` would not fail any other test.
+    let state = Arc::new(AppState::new("127.0.0.1:1"));
+    let app = forge_server::health_router(state);
+
+    let (status, body) = get(app.clone(), "/healthz").await;
+    check!(status == StatusCode::OK);
+    check!(body["status"] == "ok");
+
+    for path in [
+        "/api/v1/repos/octocat/hello",
+        "/octocat/hello.git/info/refs",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .expect("router response");
+        check!(
+            response.status() == StatusCode::NOT_FOUND,
+            "a runner served {path}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn liveness_passes_without_any_dependency() {
     // Points at a port nothing is listening on: liveness must not probe it.
     let state = Arc::new(AppState::new("127.0.0.1:1"));

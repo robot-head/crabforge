@@ -102,11 +102,13 @@ crabforge/
 ├── Cargo.lock            # COMMITTED — pins crabka rev; bumps via cargo update -p <crate> (deliberate, reviewed)
 ├── rust-toolchain.toml   # 1.97.1 (match crabka)
 ├── justfile              # dev loop: format/broker/gres/bootstrap/services/o11y/smoke (see Dev loop)
-├── config/               # topics.toml manifest, broker.dev.toml template, grafana provisioning
 ├── migrations/           # NNNN_name.sql, standard-PG with TODO(gres:*) tags; one file
 │                         # edited in place until first deploy, append-only after
-├── deploy/o11y/          # slimmed crabka observability compose (~14 containers, optional profile)
+├── deploy/o11y/          # slimmed crabka observability compose (15 containers, optional profile)
+├── deploy/k8s/           # the scale-out path: crabka operator CRs, the forge, the runner tier + KEDA
+├── deploy/knative/       # eventing-kafka-broker against crabka: a configuration and a validation
 ├── docs/gres-gaps.md     # ranked ledger of gres workarounds = upstream crabka backlog
+├── docs/upstream.md      # the same, for the broker/clients/gateway
 └── crates/
     ├── forge-types       # newtyped IDs (derive_more), Oid, shared enums — no crabka deps
     ├── forge-events      # Envelope, per-aggregate event enums, upcasting; CloudEvents binary-mode
@@ -131,18 +133,24 @@ crabforge/
     │                     #   (tree/blob/raw/commits/diffs/README); Dioxus fullstack islands for
     │                     #   interactive surfaces (PR conversation+merge box, issue composer,
     │                     #   settings, dashboard); sessions, CSRF, argon2id auth
-    ├── forge-api         # /api/v1 REST (GitHub-shaped, Bearer-PAT-only, keyset pagination)
-    ├── forge-webhookd    # bin: dynamic outbound webhooks (two-stage matcher→deliverer)
-    ├── forge-cid         # bin: Crab Actions orchestrator (workflow discovery, run/job records,
-    │                     #   status fold, poison-pill reconciliation sweep)
-    ├── forge-runner      # bin: CI runner — ShareConsumer + renew() heartbeat, Sandbox trait
-    │                     #   (DockerSandbox via bollard / ProcessSandbox for tests), log chunker
-    ├── forge-server      # bin crabforge-server: monolith assembling githttp+web+api+command+
-    │                     #   projector in-process (RYW gate = in-process watch), /healthz, telemetry init
-    ├── forge-cli         # bin crabforge: bootstrap | migrate | seed | doctor | reset | import-repo
-    └── forge-testkit     # in-process broker (Broker::start(BrokerConfig::for_tests) — share groups
-                          #   pre-enabled), ephemeral gres fixture (--auth trust / memory substrate)
+    ├── forge-hooks       # outbound webhooks: matcher → delivery queue → deliverer, SSRF guard
+    ├── forge-ci          # Crab Actions: workflow discovery and planning, the share-group queue,
+    │                     #   the runner, and three sandboxes (Process for tests, Docker, Kubernetes)
+    ├── forge-metrics     # the prometheus-client registry and the admin port (/metrics + pprof)
+    ├── forge-server      # bin crabforge-server: --role=all assembles githttp+web+api+command+
+    │                     #   projector+hooks+ci in one process (RYW gate = in-process watch);
+    │                     #   --role=runner is CI only, so that tier can scale without fencing
+    │                     #   the command service. /healthz, /readyz, telemetry init
+    ├── forge-cli         # bin crabforge: bootstrap | migrate | doctor
+    └── forge-testkit     # in-process broker (Broker::start(BrokerConfig::for_tests)), ephemeral
+                          #   gres fixture (--auth trust / memory substrate)
 ```
+
+Written as designed, built as it turned out: the API lives in `forge-server`
+rather than its own crate, webhooks and CI are libraries the server assembles
+rather than separate binaries (one process is easier to run and `--role` is
+where the split actually needed to be), and `forge-auth`/`forge-metrics` are
+crates the design did not anticipate.
 
 Crabka deps: client crates + telemetry only (`crabka-client-{producer,consumer,admin,core}`, `crabka-telemetry`; `crabka-broker` as dev-dependency in testkit). Never link `blockstore`/`metrics`/`traces`/`profiles` (git-pinned DataFusion hazard) — observability is wire-protocol only.
 
@@ -199,11 +207,17 @@ Push event → cid reads `.crabforge/workflows/*.yml` at the pushed SHA (via for
 
 ### Observability
 
-Every service: `crabka_telemetry::init(OtlpConfig::from_env(...))` (tracing + OTel spans + OTLP logs in one call), `prometheus-client` registry + `pprof_router()` on per-service admin ports (7101+), trace headers on every produce / `set_remote_parent` on every consume → one trace spans push→command→projector→webhook→CI. Optional `just o11y` compose profile: crabka's demo stack slimmed 21→~14 containers (drop profiles-*, cadvisor, schema-registry, demo apps; keep rustfs + metrics/logs/traces triplets + Alloy + Grafana with provisioned forge dashboards: git push latency, projection lag, CI queue/wait/run, webhook success/DLQ, broker reuse). Broker `__crabka_audit` (OCSF, on by default) + app-level `forge.audit` events (OCSF-shaped) fold into one audit view later via gres-fdw (phase 1.5).
+Every service: `crabka_telemetry::init(OtlpConfig::from_env(...))` (tracing + OTel spans + OTLP logs in one call), a `prometheus-client` registry plus `pprof_router()` on an admin port (`--admin-listen`, default 7101) served separately from the forge's own port because metric labels enumerate repositories and a profile is a stack dump. Trace context on every produce and `join_trace` on every consume → one trace spans push→command→projector→webhook.
+
+**It stops before CI**, and not by choice: crabka's `ShareConsumerRecord` carries no headers, so a job's trace context cannot be recovered on the way out of the share group. [`docs/upstream.md`](upstream.md) §1.
+
+Metrics published: `forge_git_duration_seconds{service,result}`, `forge_projection_lag_seconds{topic}` (age of the newest applied event, zeroed on catch-up so an idle topic does not read as hours behind) and `forge_projection_offset`/`_applied_total`, `forge_ci_jobs_queued` (unlabelled, because a KEDA query must resolve to one series), `forge_ci_job_wait_seconds`, `forge_ci_job_duration_seconds{outcome}`, `forge_webhook_deliveries_total{outcome}` and `forge_webhook_duration_seconds`.
+
+Optional `just o11y` compose profile in `deploy/o11y/`: crabka's demo stack slimmed 21→15 containers (drop profiles-*, cadvisor, schema-registry, demo apps — and the broker, which the forge already runs; keep rustfs + metrics/logs/traces triplets + Alloy + Grafana with a provisioned forge dashboard: git latency, projection lag, CI queue/wait/outcomes, webhook deliveries/dead-letters, broker reuse). Broker `__crabka_audit` (OCSF, on by default) + app-level `forge.audit` events (OCSF-shaped) fold into one audit view later via gres-fdw (phase 1.5).
 
 ### Dev loop
 
-`justfile` + `forge-cli` (Rust logic), CRABKA_DIR env (default `../crabka`): `just dev-up` = format-if-needed (with `--feature share.version=1`) → broker (`cargo run` from crabka checkout — incremental rebuild is the co-dev loop) → `crabforge bootstrap` (ensure-topics) → gres substrate mode (127.0.0.1:5433, tenant via `just gres-tenant` tolerating exists) → `crabforge migrate` (waits for a cold gres to finish replaying) → services. `just dev-reset` = rm -rf .dev (cold replay is cheap in dev). `crabforge doctor`: broker up, topics present, schema current (all three implemented); share.version active still TODO(M6) — it needs a raw ApiVersions round-trip the admin client does not expose. Shared CARGO_TARGET_DIR/sccache across both workspaces. o11y compose is optional. Migration runner: numbered SQL, ledger table, read-then-insert, no down-migrations (dev resets; prod = pre-start job); one file edited in place until first deploy, append-only after; services refuse to serve if ledger behind.
+`justfile` + `forge-cli` (Rust logic), CRABKA_DIR env (default `../crabka`): `just dev-up` = format-if-needed (with `--feature share.version=1`) → broker (`cargo run` from crabka checkout — incremental rebuild is the co-dev loop) → `crabforge bootstrap` (ensure-topics) → gres substrate mode (127.0.0.1:5433, tenant via `just gres-tenant` tolerating exists) → `crabforge migrate` (waits for a cold gres to finish replaying) → services. `just dev-reset` = rm -rf .dev (cold replay is cheap in dev). `crabforge doctor`: broker up, topics present, schema current, and `share.version` finalized — the last reads the KIP-584 finalized features out of `ApiVersionsResponse` (`forge-bus::BrokerFeatures`), which the admin client does not surface. Note that crabka does *not* currently enforce that gate: a broker at level 0 serves share groups anyway, established by `forge-ci/tests/queue.rs`, so the check reports a cluster that works by accident rather than one that is broken. See [`docs/upstream.md`](upstream.md) §8. Shared CARGO_TARGET_DIR/sccache across both workspaces. o11y compose is optional. Migration runner: numbered SQL, ledger table, read-then-insert, no down-migrations (dev resets; prod = pre-start job); one file edited in place until first deploy, append-only after; services refuse to serve if ledger behind.
 
 ### Testing & CI
 
@@ -212,26 +226,39 @@ Every service: `crabka_telemetry::init(OtlpConfig::from_env(...))` (tracing + OT
 3. **E2E smoke** (`just smoke`): full stack → register user → create repo → real `git push` → browse via API → open/merge PR → workflow runs (ProcessSandbox) → webhook delivered → `git clone` back. The co-dev canary.
 4. **GitHub Actions**: lint / nextest (no Docker) / e2e-smoke (crabka checked out at Cargo.lock rev, binaries cached by rev) / nightly crabka-main canary (smoke vs upstream HEAD — surfaces breakage on a schedule, not mid-feature).
 
-### Upstream contributions to crabka (co-dev backlog, ordered)
+### Upstream contributions to crabka (co-dev backlog)
 
-1. **MSG-1** gateway header carry-through (approved spec, 4-file fix) — unblocks header-riding gateway traffic.
-2. **MSG-2** `ce_translate.rs` CloudEvents binding — forge develops the functions in `forge-events::ce` first, ports verbatim.
-3. Topic-config whitelist additions (`min.cleanable.dirty.ratio`, `segment.ms`, `compact,delete`) — removes the small-segment workaround.
-4. **MSG-4** share-group `effective_backlog` gauge (never −1) — generic KEDA scaling; forge uses its own gres-derived `forge_ci_jobs_queued` gauge until then.
-5. Dynamic outbound webhook subscriptions for the gateway (informed by forge-webhookd; needs topology redesign — explicitly off the critical path).
-6. **gres gaps program**: `docs/gres-gaps.md` (composite/range index scans > parameterized `LIMIT` > FKs > transactional DDL > CHECK > savepoints) + forge-shaped conformance-corpus statements. 7. **gres G3 checkpoints** advocacy (cold start = full WAL replay is the biggest operability dependency).
+The ledger moved to [`docs/upstream.md`](upstream.md), which carries the eight
+items building on crabka turned up — each with the file to change, and what gets
+deleted here when it lands. The original four are items 2–5 there; the four
+found since are the share-consumer header drop (which is what stops a trace
+reaching CI), the missing `max_records` on `ShareConsumer` (which forces the job
+queue's batch buffer), the inability to seed feature levels on an in-process
+broker, and share groups being served regardless of `share.version`.
+
+Also still open, and not in that file because they are programmes rather than
+patches:
+
+- Dynamic outbound webhook subscriptions for the gateway (informed by
+  `forge-hooks`; needs a topology redesign — explicitly off the critical path).
+- **gres gaps**: [`docs/gres-gaps.md`](gres-gaps.md) (composite/range index
+  scans > parameterized `LIMIT` > FKs > transactional DDL > CHECK > savepoints)
+  plus forge-shaped statements for gres's conformance corpus.
+- **gres G3 checkpoints** advocacy: cold start is a full WAL replay, which is
+  the biggest operability dependency the forge has — and the one thing that
+  makes `deploy/k8s/40-scale-to-zero.yaml` expensive rather than free.
 
 ## Implementation steps (milestones, each demoable)
 
-- **M0 skeleton**: workspace + git deps + patch pattern, rust-toolchain, justfile, forge-testkit, `just dev-up` (broker+gres+bootstrap), ensure-topics, /healthz. *Demo: platform up from empty dir.*
-- **M1 event spine**: envelope, FencedProducer, command handler (users/repos), catalog hydration, migrations, projector, register/create-repo via API with RYW. *Demo: kill −9 server, restart, state intact from log.*
-- **M2 git read path**: FGO1 codec + chunking, `crabforge import-repo`, cache hydration, upload-pack serving. *Demo: `git clone` an imported repo; rm -rf cache; clone again.*
-- **M3 git write path**: receive-pack + quarantine + pre-receive shim + hook endpoint, quarantine harvest, UpdateRefs CAS, refs projector. *Demo: `git push`; concurrent conflicting pushes → one wins per-ref.*
-- **M4 browsing + issues**: tree/blob/commits via gix over cache, forge-render, askama pages (repo home/tree/blob/commits), auth (register/login/sessions/PATs), issues vertical (Dioxus island composer). *Demo: browse + file/close issues in the browser.*
-- **M5 pull requests**: PR open/sync (push-triggered), compare page, reviews, mergeability worker, merge via command path, PR detail Dioxus island. *Demo: full PR lifecycle; reflog in forge.events.git-refs.*
-- **M6 webhooks + CI**: forge-webhookd (matcher/deliverer/attempts/redeliver UI), forge-cid + forge-runner (share groups + DockerSandbox), PR checks UI, log tail SSE. *Demo: push → webhook + CI run with live logs → check on PR.*
-- **M7 o11y + hardening**: telemetry init everywhere + trace propagation, o11y compose profile + forge dashboards, chunk-path load tests (≫8 MiB blobs), many-repo topic probe, **disaster drill: delete gres tenant + all caches → full restore from the log** (the thesis proven mechanically). *Demo: one trace push→webhook in Grafana; the drill.*
-- **M8 (phase 2, post-MVP)**: k8s via crabka operator CRDs, KEDA prometheus scaler on `forge_ci_jobs_queued` (minReplica 0), pod-per-job sandbox, Knative eventing-kafka-broker validation against crabka, gres-activator scale-to-zero, upstream contributions 1–4.
+- **M0 skeleton** — *done*: workspace + git deps + patch pattern, rust-toolchain, justfile, forge-testkit, `just dev-up` (broker+gres+bootstrap), ensure-topics, /healthz. *Demo: platform up from empty dir.*
+- **M1 event spine** — *done*: envelope, FencedProducer, command handler (users/repos), catalog hydration, migrations, projector, register/create-repo via API with RYW. *Demo: kill −9 server, restart, state intact from log.*
+- **M2 git read path** — *done*: FGO1 codec + chunking, `crabforge import-repo`, cache hydration, upload-pack serving. *Demo: `git clone` an imported repo; rm -rf cache; clone again.*
+- **M3 git write path** — *done*: receive-pack + quarantine + pre-receive shim + hook endpoint, quarantine harvest, UpdateRefs CAS, refs projector. *Demo: `git push`; concurrent conflicting pushes → one wins per-ref.*
+- **M4 browsing + issues** — *done*: tree/blob/commits via gix over cache, forge-render, askama pages (repo home/tree/blob/commits), auth (register/login/sessions/PATs), issues vertical (Dioxus island composer). *Demo: browse + file/close issues in the browser.*
+- **M5 pull requests** — *done*: PR open/sync (push-triggered), compare page, reviews, mergeability worker, merge via command path, PR detail Dioxus island. *Demo: full PR lifecycle; reflog in forge.events.git-refs.*
+- **M6 webhooks + CI** — *done*: forge-webhookd (matcher/deliverer/attempts/redeliver UI), forge-cid + forge-runner (share groups + DockerSandbox), PR checks UI, log tail SSE. *Demo: push → webhook + CI run with live logs → check on PR.*
+- **M7 o11y + hardening** — *done*: telemetry init everywhere, W3C trace context on every record and joined on every consume (`forge-bus::join_trace`), `forge-metrics` registry + `/metrics` + pprof on an admin port, `deploy/o11y/` compose profile + forge dashboard, chunk-path load tests (≫8 MiB blobs), many-repo topic probe, **disaster drill: delete gres tenant + all caches → full restore from the log** (the thesis proven mechanically). *Demo: one trace push→webhook in Grafana; the drill.*
+- **M8 phase 2** — *done*: `deploy/k8s/` on crabka operator CRDs (Kafka + three KafkaNodePools + Gres + GresTenant), `--role=runner` so the CI tier can scale without fencing the command service, `KubernetesSandboxes` (pod per job, `restricted` Pod Security, deny-all NetworkPolicy, no service-account token), KEDA `ScaledObject` from `minReplicaCount: 0` on `forge_ci_jobs_queued`, `crabka-gres-activator` for a suspended database tier, `deploy/knative/` (a configuration for crabka's stricter topic rules and a runnable end-to-end validation), and [`docs/upstream.md`](upstream.md) for the crabka backlog. *Demo: `kubectl apply -f deploy/k8s/`; push, and watch runners scale from zero.*
 
 ## Verification
 
@@ -239,6 +266,70 @@ Every service: `crabka_telemetry::init(OtlpConfig::from_env(...))` (tracing + OT
 - Integration suite proves the four invariants: single-writer fencing (two handlers, elder dies), exactly-once projection (crash-inject between fetch and commit), RYW 202 fallback (injected projector lag), CI at-least-once idempotency (kill runner mid-job, assert single effective run).
 - M7 disaster drill is the architecture's falsifiable claim: `rm -rf` every cache + drop the gres tenant, restart, assert full recovery from broker topics alone.
 - Load checks before calling MVP done: 100 MB repo push (chunk path), 10× expected row volumes in gres hot queries, webhook DLQ under a dead endpoint, gres cold-start replay time in smoke (escalate G3 checkpoints if >30 s).
+- M8's pod sandbox is tested against a real cluster (`kind` is enough), in a
+  namespace labelled `pod-security.kubernetes.io/enforce: restricted` — the same
+  label `deploy/k8s/00-namespaces.yaml` puts on the real one, so a manifest that
+  quietly lost a hardening field is rejected by admission in the test rather
+  than on the cluster it was written for. Every manifest in `deploy/k8s/` is
+  checked with `kubectl apply --dry-run=server` against crabka's and KEDA's
+  actual CRD schemas; that is what caught `KafkaNodePool.replicas` being pinned
+  to 1, which is why there are three node pools rather than one of three.
+
+### The observability stack, brought up
+
+`deploy/o11y/` has been run against a real forge, and it paid for itself
+immediately. What the run established, in the order it was checked:
+
+- All twelve long-running services start, against a broker the forge already
+  owns rather than one of their own.
+- `forge_git_duration_seconds_count{service="receive-pack"}` and friends are
+  queryable through Grafana's Prometheus datasource, having travelled admin port
+  → Alloy → distributor → a WAL topic on the forge's own broker → compactor →
+  rustfs → querier. So is `crabka_broker_messages_in_total`, which is the
+  "broker reuse" claim being true rather than asserted.
+- Spans from `crabforge-server` are searchable in the traces querier by service
+  and by span name, including the `project` and `webhook_*` spans — the
+  cross-process trace, arriving through the log.
+- All three datasources and the dashboard provision on Grafana's first boot.
+
+And three defects it found that nothing else would have:
+
+- **`crabforge bootstrap` never provisioned a repository's object topic.** Every
+  git test provisioned it by hand first, so the README's own sequence — create a
+  repository over the API, then `git clone` — returned 500. Fixed in
+  `forge-command::create_repo`, with a test that asserts the topic exists after
+  the command rather than after a fixture.
+- **The dev-loop DSN had no password**, so `just migrate`, `just doctor` and
+  `just server` could not connect to a substrate-mode gres at all.
+- **Log queries return `forbidden` on any forge that runs gres.** See
+  [`docs/upstream.md`](upstream.md) §8; the compose now grants the ACL.
+
+### Known gap: CI jobs start in an empty workspace
+
+No sandbox checks the repository out — the container one as much as the pod one
+— so a job sees the commit that triggered it only as `head_oid` and `cargo test`
+in a workflow tests nothing. The tests miss it because they run `echo` and
+`exit 7`, which pass in an empty directory.
+
+M6 described "workspace via shallow clone with a short-lived job token" and that
+part was never built. It needs the token, a clone of the pushed commit from the
+forge's own smart-HTTP endpoint, and an egress rule permitting it, since
+`deploy/k8s` denies all traffic by default. Tagged `TODO(forge:job-checkout)` in
+`forge-ci::sandbox`. Until it lands, Crab Actions runs workflows rather than
+builds.
+
+### Knative on crabka, answered
+
+`deploy/knative/validate.sh` was run against crabka `f32bf0c` and Knative
+v1.20.0 and **passes**: a CloudEvent posted to a Knative Broker reaches its
+subscriber, carrying the `knativekafkapartition` and `knativekafkaoffset`
+extensions that show it travelled through a topic on crabka. So the answer to
+"can someone who already runs Knative point it at the forge's broker" is yes.
+
+Getting there took five runs and fixed four defects in the script itself; the
+only crabka-specific one is the topic-config whitelist. `deploy/knative/README.md`
+lists them, because each was invisible from reading the source and each would
+cost the next person the same afternoon.
 
 ## Top risks
 

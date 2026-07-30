@@ -11,8 +11,11 @@ description = "Outbound webhook delivery for Crabforge"
 workspace = true
 
 [dependencies]
+forge-bus.workspace = true
 forge-events.workspace = true
+forge-metrics.workspace = true
 forge-store.workspace = true
+forge-topics.workspace = true
 forge-types.workspace = true
 hmac.workspace = true
 reqwest.workspace = true
@@ -23,8 +26,11 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 assert2.workspace = true
+forge-topics.workspace = true
+forge-bus.workspace = true
 axum.workspace = true
 forge-testkit.workspace = true

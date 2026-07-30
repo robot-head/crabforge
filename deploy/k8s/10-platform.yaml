@@ -1,0 +1,148 @@
+# The platform: a crabka cluster and a gres on top of it.
+#
+# Both are custom resources reconciled by crabka's operator, which must be
+# installed first (`helm install crabka-operator …` from the crabka checkout, or
+# `kubectl apply -f deploy/crds/` for the CRDs alone). The operator is the only
+# way to run more than one broker — there is no admin RPC for membership change
+# — which is exactly why the scale-out path is Kubernetes rather than bare
+# metal.
+#
+# The passwords here are placeholders and are meant to be replaced by whatever
+# manages secrets in your cluster. They are committed as literal `stringData` so
+# `kubectl apply -k` produces a working cluster on the first try; a deployment
+# that reaches production with `change-me` in it has a larger problem than this
+# file.
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pgdog-admin
+  namespace: crabforge
+type: Opaque
+stringData:
+  password: change-me
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: forge-gres-password
+  namespace: crabforge
+type: Opaque
+stringData:
+  password: change-me
+---
+apiVersion: crabka.io/v1alpha1
+kind: Kafka
+metadata:
+  name: forge
+  namespace: crabforge
+spec:
+  kafkaVersion: "3.7.0"
+  config:
+    # Retention is a per-topic decision here — the domain event topics keep
+    # everything forever, because the event history *is* the system of record —
+    # so the cluster default only covers topics nobody declared. Left at a week
+    # so an accident is recoverable rather than permanent.
+    log.retention.hours: "168"
+  metricsConfig:
+    podMonitor:
+      interval: 15s
+---
+# Three brokers, so a node can be lost — one works and is what a laptop runs,
+# but three is the smallest number for which "the log is the only source of
+# truth" is not also "one disk is the only copy".
+#
+# Three *pools*, not one pool of three: the CRD pins `replicas` to exactly 1
+# (`maximum: 1` in the schema, enforced by the API server), so a node pool is a
+# node. Each needs its own `nodeIdStart`, and the ids must not collide.
+apiVersion: crabka.io/v1alpha1
+kind: KafkaNodePool
+metadata:
+  name: forge-broker-0
+  namespace: crabforge
+  labels:
+    crabka.io/cluster: forge
+spec:
+  roles: [Controller, Broker]
+  replicas: 1
+  nodeIdStart: 0
+  storage:
+    type: PersistentClaim
+    # Git objects live in the log, so this is the repository storage rather than
+    # a message buffer. Size it like a disk, not like a queue.
+    size: 100Gi
+    deleteClaim: false
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits: { cpu: "4", memory: 4Gi }
+---
+apiVersion: crabka.io/v1alpha1
+kind: KafkaNodePool
+metadata:
+  name: forge-broker-1
+  namespace: crabforge
+  labels:
+    crabka.io/cluster: forge
+spec:
+  roles: [Controller, Broker]
+  replicas: 1
+  nodeIdStart: 1
+  storage:
+    type: PersistentClaim
+    size: 100Gi
+    deleteClaim: false
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits: { cpu: "4", memory: 4Gi }
+---
+apiVersion: crabka.io/v1alpha1
+kind: KafkaNodePool
+metadata:
+  name: forge-broker-2
+  namespace: crabforge
+  labels:
+    crabka.io/cluster: forge
+spec:
+  roles: [Controller, Broker]
+  replicas: 1
+  nodeIdStart: 2
+  storage:
+    type: PersistentClaim
+    size: 100Gi
+    deleteClaim: false
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits: { cpu: "4", memory: 4Gi }
+---
+apiVersion: crabka.io/v1alpha1
+kind: Gres
+metadata:
+  name: forge
+  namespace: crabforge
+spec:
+  kafkaCluster: forge
+  pgdog:
+    replicas: 2
+    listenPort: 6432
+    adminSecretRef:
+      name: pgdog-admin
+      key: password
+  defaults:
+    # The read models are rebuildable from the event topics, so this replication
+    # factor protects availability rather than the data. It still matters:
+    # rebuilding means replaying every event, which is minutes.
+    walReplication: 3
+    checkpointFrames: 10000
+    checkpointBytes: 134217728
+---
+apiVersion: crabka.io/v1alpha1
+kind: GresTenant
+metadata:
+  name: forge
+  namespace: crabforge
+spec:
+  gres: forge
+  user: forge
+  passwordSecretRef:
+    name: forge-gres-password
+    key: password

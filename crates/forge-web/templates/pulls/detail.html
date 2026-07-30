@@ -14,6 +14,33 @@
   {% when None %}
 {% endmatch %}
 
+{% if !checks.is_empty() %}
+<section class="checks">
+  <h3>Checks</h3>
+  <ul class="check-list">
+    {% for c in checks %}
+    <li class="check {{ c.status_class }}">
+      <span class="check-name">{{ c.name }} #{{ c.number }}</span>
+      <span class="check-status">{{ c.status }}</span>
+      {% if !c.jobs.is_empty() %}
+      <ul class="check-jobs">
+        {% for j in c.jobs %}
+        <li class="check-job {{ j.status_class }}">
+          <span class="job-name">{{ j.name }}</span>
+          <span class="job-status">{{ j.status }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if !checks_passed %}
+  <p class="checks-note">Some checks have not passed yet.</p>
+  {% endif %}
+</section>
+{% endif %}
+
 {% for r in reviews %}
   <article class="comment">
     <header>{{ r.reviewer }} <span class="chip {{ r.verdict_class }}">{{ r.verdict_label }}</span></header>

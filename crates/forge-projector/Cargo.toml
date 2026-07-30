@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 forge-bus.workspace = true
 forge-events.workspace = true
+forge-metrics.workspace = true
 forge-store.workspace = true
 forge-types.workspace = true
 time.workspace = true
@@ -21,6 +22,10 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+forge-bus.workspace = true
+tempfile.workspace = true
+forge-topics.workspace = true
+forge-git.workspace = true
 assert2.workspace = true
 forge-command.workspace = true
 forge-testkit.workspace = true

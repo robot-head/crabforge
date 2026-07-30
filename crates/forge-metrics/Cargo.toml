@@ -1,0 +1,22 @@
+[package]
+name = "forge-metrics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Prometheus metrics for the Crabforge services"
+
+[lints]
+workspace = true
+
+[dependencies]
+axum.workspace = true
+crabka-telemetry.workspace = true
+prometheus-client.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+assert2.workspace = true
+tower.workspace = true

@@ -49,11 +49,13 @@ crabka-broker = { git = "https://github.com/robot-head/crabka", branch = "main" 
 # ── forge crates ─────────────────────────────────────────────────────────────
 forge-auth = { path = "crates/forge-auth" }
 forge-bus = { path = "crates/forge-bus" }
+forge-ci = { path = "crates/forge-ci" }
 forge-command = { path = "crates/forge-command" }
 forge-events = { path = "crates/forge-events" }
 forge-git = { path = "crates/forge-git" }
 forge-hooks = { path = "crates/forge-hooks" }
 forge-githttp = { path = "crates/forge-githttp" }
+forge-metrics = { path = "crates/forge-metrics" }
 forge-projector = { path = "crates/forge-projector" }
 forge-render = { path = "crates/forge-render" }
 forge-store = { path = "crates/forge-store" }
@@ -82,6 +84,17 @@ refinement-types = { version = "0.3", default-features = false, features = ["std
 flate2 = "1"
 hex = "0.4"
 hmac = "0.13"
+# Metrics. The version crabka's own services use, so a forge dashboard and a
+# broker dashboard read the same exposition format.
+prometheus-client = "0.25"
+# OpenTelemetry, dev-dependency only: `crabka-telemetry` owns the pipeline, and
+# these are here so a test can stand up a real tracer and assert that trace
+# context survives a trip through the log. Versions match crabka's, because a
+# second major of `opentelemetry` in one binary means two global propagators and
+# a test that passes while production drops every parent span.
+opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace"] }
+tracing-opentelemetry = { version = "0.33", default-features = false }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "charset", "http2"] }
 # ── rendering ────────────────────────────────────────────────────────────────
 # All of these default to oniguruma, a C library. `default-features = false`
@@ -94,6 +107,7 @@ syntect = { version = "5.3", default-features = false, features = ["default-fanc
 two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 sha2 = "0.11"
 tempfile = "3"
 # ── templating ───────────────────────────────────────────────────────────────

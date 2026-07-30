@@ -10,6 +10,14 @@ pub mod state;
 
 pub use state::AppState;
 
+/// Liveness and readiness only.
+///
+/// For a process with no HTTP surface of its own — a CI runner — that still has
+/// to answer an orchestrator's probes.
+pub fn health_router(state: Arc<AppState>) -> axum::Router {
+    health::router().with_state(state)
+}
+
 /// Build the application router.
 pub fn router(state: Arc<AppState>) -> axum::Router {
     let git = state.git.clone();

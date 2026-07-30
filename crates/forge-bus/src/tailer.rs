@@ -81,7 +81,28 @@ impl Tailer {
 
     /// Open a tailer positioned at `offset` — used when the cursor was
     /// recovered from durable state.
+    ///
+    /// Partition 0, which is every topic the forge keys by aggregate and gives
+    /// a single partition. Readers of a genuinely partitioned topic want
+    /// [`Tailer::open_partition_at`] and one tailer each.
     pub async fn open_at(bootstrap: &str, topic: &str, offset: i64) -> Result<Self, TailError> {
+        Self::open_partition_at(bootstrap, topic, 0, offset).await
+    }
+
+    /// Open a tailer on one partition of a topic.
+    ///
+    /// A tailer is deliberately single-partition — it owns a cursor, and a
+    /// cursor over several partitions is not a number. Reading a topic with
+    /// more than one partition means one tailer and one cursor per partition,
+    /// which is also what lets them make progress independently: the reason the
+    /// delivery queue is partitioned at all is so a receiver that has stopped
+    /// answering blocks its own partition rather than the whole forge.
+    pub async fn open_partition_at(
+        bootstrap: &str,
+        topic: &str,
+        partition: i32,
+        offset: i64,
+    ) -> Result<Self, TailError> {
         // A raw connection rather than a `Client`: this is a single-partition
         // cursor-owning reader, so the pool and routing a `Client` provides
         // would only add indirection. Crabka's own schema registry reads its
@@ -98,10 +119,15 @@ impl Tailer {
             conn,
             topic: topic.to_string(),
             topic_id,
-            partition: 0,
+            partition,
             offset,
             applied,
         })
+    }
+
+    /// Which partition this tailer reads.
+    pub fn partition(&self) -> i32 {
+        self.partition
     }
 
     /// Current cursor: the offset the next fetch starts from.
@@ -189,6 +215,22 @@ impl Tailer {
             self.mark_applied(batch.next_offset - 1);
         }
     }
+}
+
+/// Make `span` a child of the trace the record was written in.
+///
+/// The other half of the `traceparent` header [`crate::PendingRecord::event`]
+/// attaches. A no-op if the record carries no context — records written before
+/// this existed, or by something that is not the forge — so it is safe to call
+/// on every record rather than only the ones known to have one.
+pub fn join_trace(span: &tracing::Span, record: &FetchedRecord) {
+    crabka_telemetry::propagation::set_remote_parent(
+        span,
+        record
+            .headers
+            .iter()
+            .filter_map(|h| h.value.as_ref().map(|v| (h.key.as_str(), v.as_ref()))),
+    );
 }
 
 fn resolve_bootstrap(bootstrap: &str) -> Result<SocketAddr, TailError> {

@@ -147,27 +147,53 @@ fn row_to_repo(row: &tokio_postgres::Row) -> RepoRecord {
     }
 }
 
-/// The projector's durable cursor.
+/// The reader that owns projection-table cursors.
+pub const PROJECTOR: &str = "projector";
+
+/// The reader that owns the webhook matcher's cursors.
+pub const WEBHOOK_MATCHER: &str = "webhook-matcher";
+
+/// The reader that owns the webhook delivery worker's cursor.
+pub const WEBHOOK_WORKER: &str = "webhook-worker";
+
+/// The reader that owns the CI orchestrator's cursor.
+pub const CI_ORCHESTRATOR: &str = "ci-orchestrator";
+
+/// A reader's durable cursor.
 ///
-/// Read and written inside the same transaction as the rows a batch produces,
-/// which is what makes projection exactly-once in effect despite at-least-once
-/// delivery from the log.
+/// The projector reads and writes its cursor inside the same transaction as the
+/// rows a batch produces, which is what makes projection exactly-once in effect
+/// despite at-least-once delivery from the log.
+///
+/// Cursors are per reader as well as per topic. More than one reader follows
+/// the same domain topics — the projector to build read models, the webhook
+/// matcher to fan events out to subscribers — and they are at different places
+/// for different reasons. Sharing a row would make whichever ran second skip
+/// everything the first had already passed.
 pub struct CursorStore<'a> {
     client: &'a Client,
+    reader: &'a str,
 }
 
 impl<'a> CursorStore<'a> {
-    pub fn new(client: &'a Client) -> Self {
-        Self { client }
+    pub fn new(client: &'a Client, reader: &'a str) -> Self {
+        Self { client, reader }
     }
 
-    /// Where to resume `topic` from. Zero when it has never been projected.
+    /// Where to resume partition 0 of `topic` from.
     pub async fn applied_offset(&self, topic: &str) -> Result<i64, StoreError> {
+        self.applied_offset_for(topic, 0).await
+    }
+
+    /// Where to resume one partition from. Zero when this reader has not seen
+    /// it — which is also the right answer for a partition that is empty.
+    pub async fn applied_offset_for(&self, topic: &str, partition: i32) -> Result<i64, StoreError> {
         let row = self
             .client
             .query_opt(
-                "SELECT applied_offset FROM projector_state WHERE topic = $1",
-                &[&topic],
+                "SELECT applied_offset FROM reader_cursors \
+                 WHERE reader = $1 AND topic = $2 AND partition = $3",
+                &[&self.reader, &topic, &partition],
             )
             .await?;
         Ok(row.map_or(0, |row| row.get(0)))
@@ -178,13 +204,29 @@ impl<'a> CursorStore<'a> {
     /// One statement, so the cursor cannot be left behind by a crash between an
     /// update that matched nothing and the insert that would have created it.
     pub async fn set_applied_offset(&self, topic: &str, offset: i64) -> Result<(), StoreError> {
+        self.set_applied_offset_for(topic, 0, offset).await
+    }
+
+    /// Record progress on one partition.
+    pub async fn set_applied_offset_for(
+        &self,
+        topic: &str,
+        partition: i32,
+        offset: i64,
+    ) -> Result<(), StoreError> {
         self.client
             .execute(
-                "INSERT INTO projector_state (topic, partition, applied_offset, updated_at) \
-                 VALUES ($1, 0, $2, $3) \
-                 ON CONFLICT (topic, partition) DO UPDATE SET \
+                "INSERT INTO reader_cursors (reader, topic, partition, applied_offset, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5) \
+                 ON CONFLICT (reader, topic, partition) DO UPDATE SET \
                  applied_offset = excluded.applied_offset, updated_at = excluded.updated_at",
-                &[&topic, &offset, &forge_types::now()],
+                &[
+                    &self.reader,
+                    &topic,
+                    &partition,
+                    &offset,
+                    &forge_types::now(),
+                ],
             )
             .await?;
         Ok(())

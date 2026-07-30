@@ -399,7 +399,7 @@ async fn replaying_the_whole_topic_leaves_the_same_state() {
         .unwrap();
 
     h.store
-        .cursors()
+        .cursors(forge_store::PROJECTOR)
         .set_applied_offset(topics::EVENTS_ISSUES, 0)
         .await
         .unwrap();
