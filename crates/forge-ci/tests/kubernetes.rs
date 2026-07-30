@@ -60,15 +60,29 @@ const NAMESPACE: &str = "crabforge-ci-test";
 /// concurrency for the same reason.
 static POD_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
-/// Create the test namespace, enforcing the same Pod Security level
-/// `deploy/k8s/00-namespaces.yaml` puts on the real one.
+/// Create the test namespace, at most once for the whole file.
+///
+/// Once, because nine tests racing to `kubectl apply` the same namespace on a
+/// cluster that has just been created loses: some of the pods that follow are
+/// rejected by Pod Security admission, which reads the namespace's labels
+/// through a cache that the concurrent applies keep invalidating. Six of nine
+/// failed that way on a fresh `kind`, and passed on every run afterwards —
+/// which is the shape of a flake that only ever bites CI, where the cluster is
+/// always new.
+async fn ensure_namespace() {
+    static ONCE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+    ONCE.get_or_init(create_namespace).await;
+}
+
+/// Enforce the same Pod Security level `deploy/k8s/00-namespaces.yaml` puts on
+/// the real namespace.
 ///
 /// Not decoration: `restricted` is admission refusing any pod that is not
 /// non-root, without privilege escalation, with all capabilities dropped and a
 /// seccomp profile set. Running these tests in a permissive namespace would let
 /// a manifest that had quietly lost one of those pass every assertion below,
 /// and then be rejected on the cluster it was written for.
-async fn ensure_namespace() {
+async fn create_namespace() {
     let namespace = serde_json::json!({
         "apiVersion": "v1",
         "kind": "Namespace",
@@ -89,7 +103,10 @@ async fn run(
     env: BTreeMap<String, String>,
 ) -> Option<(StepOutcome, Vec<String>, Option<String>)> {
     if !kubernetes_available().await {
-        eprintln!("SKIP: no reachable Kubernetes cluster (try `kind create cluster`)");
+        forge_testkit::skip(
+            "kubernetes",
+            "no cluster answers (try `kind create cluster`)",
+        );
         return None;
     }
     ensure_namespace().await;
@@ -130,7 +147,10 @@ async fn several_steps_share_one_workspace() {
     // pass every other test here and fail every real workflow, because the
     // second step would not find what the first one built.
     if !kubernetes_available().await {
-        eprintln!("SKIP: no reachable Kubernetes cluster");
+        forge_testkit::skip(
+            "kubernetes",
+            "no cluster answers (try `kind create cluster`)",
+        );
         return;
     }
     ensure_namespace().await;
@@ -257,7 +277,10 @@ async fn a_pod_does_not_learn_the_addresses_of_its_neighbours() {
     // `the_pod_has_no_api_credentials`) or through the default-deny
     // NetworkPolicy this namespace is meant to carry.
     if !kubernetes_available().await {
-        eprintln!("SKIP: no reachable Kubernetes cluster");
+        forge_testkit::skip(
+            "kubernetes",
+            "no cluster answers (try `kind create cluster`)",
+        );
         return;
     }
     ensure_namespace().await;
@@ -329,7 +352,10 @@ async fn a_missing_image_is_an_infrastructure_failure() {
     // Not a build failure: nothing was learned about the code, and reporting it
     // as one sends someone to debug tests that never ran.
     if !kubernetes_available().await {
-        eprintln!("SKIP: no reachable Kubernetes cluster");
+        forge_testkit::skip(
+            "kubernetes",
+            "no cluster answers (try `kind create cluster`)",
+        );
         return;
     }
     ensure_namespace().await;

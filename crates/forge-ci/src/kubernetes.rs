@@ -347,10 +347,22 @@ impl Sandbox for KubernetesSandbox {
             Ok(Ok(())) => {}
             Ok(Err(reason)) => return StepResult::infra(reason),
             Err(_) => {
-                return StepResult::infra(format!(
-                    "the pod did not start within the step's {}s budget",
-                    timeout.as_secs()
-                ));
+                // Ask the pod why before giving up. `kubectl wait` was still
+                // waiting when this budget expired, so the explanatory path
+                // inside `start` never ran — and "timed out" instead of
+                // "ImagePullBackOff" is the difference between an operator
+                // fixing an image name and an operator looking at the runner.
+                let reason = self.why_not_running().await;
+                return StepResult::infra(match reason {
+                    Some(reason) => format!(
+                        "the pod did not start within the step's {}s budget: {reason}",
+                        timeout.as_secs()
+                    ),
+                    None => format!(
+                        "the pod did not start within the step's {}s budget",
+                        timeout.as_secs()
+                    ),
+                });
             }
         }
         // Whatever is left after starting. Saturating, so a step that spent its

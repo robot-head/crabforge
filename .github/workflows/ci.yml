@@ -91,24 +91,22 @@ jobs:
           chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
           kind create cluster --name crabforge-ci --wait 180s
 
+      # No `--nocapture`. Every test that boots a broker produces pages of
+      # `connection refused` as its fixture shuts down, and without capture all
+      # of it lands in the log — tens of thousands of lines in which the one
+      # assertion that failed is invisible. libtest prints a test's output only
+      # when that test fails, which is exactly what is wanted here.
+      #
+      # `CRABFORGE_REQUIRE_DEPS` is how the skip guard survives that. Tests skip
+      # themselves when a dependency is missing, which is right on a laptop and
+      # wrong in a job that installs all of them; with this set, a skip is a
+      # failure with a message naming what was missing, rather than a line in a
+      # log nobody reads.
       - name: cargo test
         env:
           CRABFORGE_GRES_BIN: /home/runner/.local/bin/crabka-gres
-        run: |
-          set -o pipefail
-          cargo test --workspace --no-fail-fast -- --nocapture 2>&1 | tee /tmp/test.log
-
-      # Tests skip themselves when a dependency is absent, which is right on a
-      # laptop and wrong here: this job installs every one of them, so a skip
-      # means CI quietly stopped exercising gres, Docker or Kubernetes and went
-      # green anyway. Read from the run above rather than repeating it.
-      - name: nothing skipped
-        run: |
-          if grep -q '^SKIP:' /tmp/test.log; then
-            echo "::error::a test skipped a dependency this job provides"
-            grep '^SKIP:' /tmp/test.log | sort -u
-            exit 1
-          fi
+          CRABFORGE_REQUIRE_DEPS: "1"
+        run: cargo test --workspace --no-fail-fast
 
   manifests:
     name: deployment manifests

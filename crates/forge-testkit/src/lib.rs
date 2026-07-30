@@ -24,6 +24,32 @@ mod gres;
 
 pub use gres::{Gres, require_gres, wait_for_port};
 
+/// The variable that turns a skipped dependency into a failure.
+///
+/// Set it wherever the dependencies are supposed to be present.
+pub const REQUIRE_DEPS: &str = "CRABFORGE_REQUIRE_DEPS";
+
+/// Report that a test is being skipped for want of `dependency`, or fail if
+/// this environment promised to provide it.
+///
+/// Skipping is right on a laptop with no Kubernetes cluster: a red suite should
+/// tell you about the code, not the machine. It is exactly wrong in CI, which
+/// installs every dependency on purpose — there, a skip means a third of the
+/// suite quietly stopped running while the badge stayed green. Same tests, and
+/// the environment says which it is.
+///
+/// # Panics
+///
+/// When [`REQUIRE_DEPS`] is set, because a skip there is a failure.
+pub fn skip(dependency: &str, why: &str) {
+    assert!(
+        std::env::var_os(REQUIRE_DEPS).is_none(),
+        "{dependency} is unavailable ({why}), and {REQUIRE_DEPS} says this \
+         environment provides it"
+    );
+    eprintln!("SKIP: {dependency} {why}");
+}
+
 /// Install a tracing subscriber once per test binary. Honours `RUST_LOG`.
 pub fn init_tracing() {
     let _ = tracing_subscriber::fmt()
