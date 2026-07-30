@@ -247,6 +247,10 @@ textarea { min-height: 90px; resize: vertical; line-height: 1.55; }
 
 /* ── tables ───────────────────────────────────────────────────────────────── */
 
+/* Tables that would rather scroll than push the page sideways. A listing has a
+   column count the content decides, not the viewport. */
+.scroll-x { overflow-x: auto; }
+
 .table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .table th {
   text-align: left; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
@@ -379,6 +383,19 @@ footer {
 /* ── the tree ─────────────────────────────────────────────────────────────── */
 
 .tree td:first-child { width: 26px; color: var(--color-neutral-600); text-align: center; }
+
+/* Commit history. The three trailing columns are fixed so the summary takes
+   the slack; on a narrow page that adds up to more than the content area, so
+   they give the width back and the wrapper scrolls if it is still not enough. */
+.commit-table th:nth-child(2) { width: 200px; }
+.commit-table th:nth-child(3) { width: 110px; }
+.commit-table th:nth-child(4) { width: 130px; }
+@media (max-width: 760px) {
+  .commit-table { min-width: 460px; }
+  .commit-table th:nth-child(2),
+  .commit-table th:nth-child(3),
+  .commit-table th:nth-child(4) { width: auto; }
+}
 .tree td.size { text-align: right; color: var(--color-neutral-600); width: 90px; font-variant-numeric: tabular-nums; }
 .tree a { color: var(--color-neutral-200); }
 .tree a:hover { color: var(--color-accent-300); }
@@ -407,7 +424,7 @@ footer {
 
 /* ── code ─────────────────────────────────────────────────────────────────── */
 
-.blob pre, pre.diff, .empty pre {
+.blob pre, pre.diff, .empty-state pre {
   margin: 0; background: var(--color-surface); border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm); padding: var(--space-6);
   overflow-x: auto; font-size: 12px; line-height: 1.6;
@@ -606,9 +623,11 @@ form.auth .btn { margin-top: var(--space-2); }
 .profile-head { display: flex; align-items: center; gap: var(--space-6); margin-bottom: var(--space-8); }
 .profile-head .monogram { width: 46px; height: 46px; font-size: 17px; }
 .profile-head h1 { margin: 0; font-size: 22px; }
-.profile-head .meta { font-size: 12px; color: var(--color-neutral-500); }
 
-.repo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--space-4); }
+/* `min(300px, 100%)` rather than a bare 300px: below about 328px the column
+   would be wider than the content area it sits in, and the grid would push the
+   page sideways instead of narrowing. */
+.repo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: var(--space-4); }
 .repo-card { display: flex; flex-direction: column; gap: var(--space-2); }
 .repo-card .name { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 14px; }
 .repo-card .description { font-size: 12.5px; color: var(--color-neutral-500); flex: 1; }

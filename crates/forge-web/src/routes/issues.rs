@@ -224,6 +224,7 @@ pub async fn detail(
         open_issues: counters.open_issues,
         number: issue.number,
         open: issue.is_open(),
+        comment_count: issue.comment_count,
         title: issue.title,
         author_initials: crate::pages::initials(&issue.author_name),
         author: issue.author_name,

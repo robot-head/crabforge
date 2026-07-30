@@ -186,6 +186,9 @@ pub struct IssuePage {
     pub author_initials: String,
     pub body: Safe<String>,
     pub comments: Vec<CommentView>,
+    /// Every comment on the issue, which is not the same number as the length
+    /// of `comments`: that one is capped at a page.
+    pub comment_count: i64,
     pub can_write: bool,
 }
 

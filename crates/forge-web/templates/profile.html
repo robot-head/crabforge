@@ -3,10 +3,7 @@
 {% block content %}
 <div class="profile-head">
   <span class="monogram">{{ initials }}</span>
-  <div>
-    <h1>{{ username }}</h1>
-    <span class="meta">{{ repos.len() }} repositories</span>
-  </div>
+  <h1>{{ username }}</h1>
 </div>
 
 {% if repos.is_empty() %}
