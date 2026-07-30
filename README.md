@@ -37,14 +37,22 @@ architecture and the reasoning behind it.
 | M5 pull requests — open, review, merge | done |
 | M6 webhooks and Crab Actions CI | done |
 | M7 observability, hardening, disaster drill | done |
+| M8 Kubernetes, pod-per-job CI, scale-to-zero | done |
 
-481 tests, none of them mocked at the boundaries that matter: they run against a
-real crabka broker, a real `crabka-gres`, the real `git` binary, and a real
-Docker daemon.
+522 tests, none of them mocked at the boundaries that matter: they run against a
+real crabka broker, a real `crabka-gres`, the real `git` binary, a real Docker
+daemon, and a real Kubernetes cluster.
 
-Not built, and deliberately so: the Kubernetes deployment path, scale-to-zero,
-and multi-broker clustering. Those are phase two in `docs/PLAN.md` and depend on
-crabka's operator rather than on anything here.
+Both optional deployments have been run rather than only written. The
+observability stack goes up against a live forge, and metrics, traces and logs
+all reach Grafana through crabka's own services — which store their write-ahead
+logs on the same broker the forge uses. Knative's `eventing-kafka-broker`
+delivers a CloudEvent through a crabka topic
+([deploy/knative](deploy/knative/)).
+
+Doing that found three defects nothing else had, including the fact that
+creating a repository over the API and then cloning it did not work.
+`docs/PLAN.md` has the list.
 
 ## Using it
 
@@ -102,14 +110,26 @@ if the flag is dropped, including one proving the runner's own environment —
 where the broker address and database credentials live — does not leak in.
 
 Jobs are handed out through a KIP-932 share group, so runners scale by starting
-more of them. That needs a broker formatted with the feature on:
+more of them — and, on Kubernetes, from zero. That is the property that makes a
+share group the right primitive: a consumer group partitions ownership, so a
+fourth runner against three partitions would sit idle, and a group with no
+members at all would be a problem rather than a state.
+
+The feature is set when the broker's log directory is formatted and cannot be
+changed afterwards:
 
 ```bash
 crabka format --feature share.version=1 ...   # `just format` already does this
 ```
 
-A broker without it gets a clear error and a forge that serves git without CI,
-rather than one that silently never runs anything.
+`just doctor` reports a broker without it and says that the fix is a reformat.
+It is worth passing even though crabka does not currently enforce the gate —
+`crates/forge-ci/tests/queue.rs` establishes that a broker at level 0 serves the
+queue anyway, and has a test that fails the day that changes.
+
+On a cluster, jobs run as pods instead of containers: one pod per job, no
+network, no capabilities, no service-account token, `restricted` Pod Security
+enforced by admission. See [deploy/k8s](deploy/k8s/).
 
 ## Webhooks
 
@@ -163,13 +183,28 @@ listed — a partial patch links two copies of the client types into one binary.
 Gaps we hit in crabka's Postgres engine are tracked in
 [docs/gres-gaps.md](docs/gres-gaps.md) as upstream work, and the workarounds they
 force are tagged `TODO(gres:<feature>)` in the storage layer so they can be
-deleted when the feature lands.
+deleted when the feature lands. [docs/upstream.md](docs/upstream.md) does the
+same for the broker, the clients and the gateway — eight items, each naming the
+file to change and what gets deleted here when it does.
 
 ## Observability
 
 Every service calls `crabka_telemetry::init`, which gives structured logs, OTel
 spans and an OTLP logs bridge from the standard `OTEL_*` variables — and
-degrades to stderr when none are set, so a laptop needs no collector.
+degrades to stderr when none are set, so a laptop needs no collector. Prometheus
+metrics and pprof endpoints are on a separate admin port (`:7101`), because
+metric labels enumerate repository names and a profile is a dump of the
+process's stacks; neither belongs on the port the public reaches.
+
+Every record the forge writes carries a W3C `traceparent` and every consumer
+joins it, so a push, the command that decided it, the projection that applied it
+and the webhook it triggered are one trace rather than four. The log is the only
+thing connecting those processes, so the context has to travel in it.
+
+`just o11y` brings up crabka's own metrics, logs and traces services pointed at
+this forge, storing their write-ahead logs in the same broker — see
+[deploy/o11y](deploy/o11y/), and note that it wants `just broker-o11y` rather
+than `just broker`.
 
 The forge does not link crabka's metrics, traces or profiles crates: they carry
 a git-pinned DataFusion and a locked arrow major, which would put a large and
@@ -180,12 +215,13 @@ services are reached over the wire, like any other OTLP consumer.
 
 Three layers beyond the compiler: units carried in the type (`uom`), refinement
 types that make out-of-range values unconstructible (`refinement-types`), and
-integration tests against a real broker, a real gres, the real `git` binary and
-a real Docker daemon. See [docs/verification.md](docs/verification.md).
+integration tests against a real broker, a real gres, the real `git` binary, a
+real Docker daemon and a real Kubernetes cluster. See
+[docs/verification.md](docs/verification.md).
 
-Tests that need `crabka-gres` or Docker skip themselves when it is absent rather
-than failing — a red suite should tell you about the code, not about the
-machine.
+Tests that need `crabka-gres`, Docker or a cluster skip themselves when it is
+absent rather than failing — a red suite should tell you about the code, not
+about the machine. `kind create cluster` is enough for the pod-sandbox ones.
 
 ## License
 

@@ -1,0 +1,30 @@
+# Two namespaces, and the split is the point.
+#
+# `crabforge` holds the forge: the broker, gres, the server, the runners. Its
+# pods hold every credential the forge has.
+#
+# `crabforge-ci` holds nothing but job pods, which execute code from anyone who
+# can open a pull request. Everything that isolates them — the default-deny
+# NetworkPolicy, the resource quota, the Pod Security admission level — is
+# namespace-scoped, so putting jobs in the forge's namespace would mean either
+# applying none of it or applying all of it to the forge as well.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crabforge
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crabforge-ci
+  labels:
+    # `restricted` is the strictest built-in level: non-root, no privilege
+    # escalation, dropped capabilities, a seccomp profile. The pod sandbox sets
+    # all of it explicitly; this is admission refusing anything that does not,
+    # so a future change that quietly relaxes the manifest is rejected by the
+    # API server rather than accepted.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

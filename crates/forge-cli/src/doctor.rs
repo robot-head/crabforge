@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use crabka_client_admin::AdminClient;
+use forge_bus::BrokerFeatures;
 use forge_store::{Store, migrate, redact_dsn};
 
 /// How long to spend on the whole gres probe — connecting *and* reading.
@@ -113,17 +114,51 @@ pub async fn run(bootstrap: &str, dsn: &str) -> Report {
         }
     }
 
+    checks.push(share_groups_check(bootstrap).await);
     checks.push(schema_check(dsn).await);
 
-    // TODO(M6): verify `share.version >= 1` in the broker's finalized features.
-    // A broker formatted without `--feature share.version=1` cannot run the CI
-    // work queue, and the flag is only settable at format time — recovering
-    // means re-formatting the log directory, not editing config. The dev-loop
-    // `just format` recipe passes the flag, so this check is a safety net for
-    // environments formatted before that existed. It needs a raw ApiVersions
-    // round-trip via client-core; the admin client does not expose features.
-
     Report { checks }
+}
+
+/// Whether this broker was formatted to serve share groups.
+///
+/// The CI work queue is a KIP-932 share group, gated by the `share.version`
+/// feature. That level is written when the log directory is formatted and
+/// cannot be changed afterwards, so a broker that lacks it is a reformat away
+/// from being fixed — which is exactly the kind of thing worth learning before
+/// there is anything in the log worth keeping, rather than the first time
+/// someone pushes.
+///
+/// Reported as a failure even though crabka does not presently *enforce* the
+/// gate (`forge-ci/tests/queue.rs` establishes that a broker at level 0 serves
+/// the queue anyway). The forge tracks crabka's main branch, the enforcement
+/// is what KIP-932 specifies, and the recovery — reformat, discarding the log —
+/// gets more expensive every day it is deferred. A cluster that only works by
+/// accident is not a cluster that is ready to serve.
+async fn share_groups_check(bootstrap: &str) -> Check {
+    let outcome = match BrokerFeatures::probe(bootstrap).await {
+        Ok(features) if features.share_groups() => Outcome::Pass(format!(
+            "share.version={}",
+            features.level(forge_bus::SHARE_VERSION)
+        )),
+        Ok(_) => Outcome::Fail {
+            problem: "this broker was formatted without share.version, so Crab Actions runs on \
+                      a feature the broker does not advertise"
+                .into(),
+            fix: "re-format the log directory with \
+                  `crabka format --feature share.version=1 …` (`just format` after \
+                  `just dev-reset` in development); the level cannot be raised in place"
+                .into(),
+        },
+        Err(e) => Outcome::Fail {
+            problem: format!("could not read the broker's features: {e}"),
+            fix: "check broker health — the same address the broker check used".into(),
+        },
+    };
+    Check {
+        name: "share groups",
+        outcome,
+    }
 }
 
 /// Whether gres holds the schema this build expects.

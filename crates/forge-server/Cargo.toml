@@ -26,6 +26,7 @@ forge-command.workspace = true
 crabka-telemetry.workspace = true
 forge-ci.workspace = true
 forge-git.workspace = true
+forge-metrics.workspace = true
 forge-hooks.workspace = true
 forge-githttp.workspace = true
 forge-render.workspace = true

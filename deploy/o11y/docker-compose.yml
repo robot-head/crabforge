@@ -1,0 +1,273 @@
+name: crabforge-o11y
+
+# Crabka's observability stack, pointed at the forge.
+#
+# Adapted from crabka's own `demo/observability/docker-compose.yml` with one
+# structural change: there is no broker here. The forge already runs one, the
+# whole premise of this repository is that there is only ever one, and the
+# observability services are ordinary clients of it — their write-ahead logs are
+# just more topics on the same log. Two brokers on one laptop would also be
+# about four gigabytes of the wrong point.
+#
+# That is the one thing to get right before `docker compose up`: these
+# containers have to be able to reach the forge's broker, and a Kafka client
+# connects to whatever address the broker *advertises*, not the one it was
+# given. See README.md — `just broker-o11y` sets it correctly.
+#
+# Also dropped from the demo: the profiles tier, cAdvisor, the schema registry
+# and the demo applications. The forge's services still serve
+# `/debug/pprof/*` on their admin port, so adding `crabka-profiles` back is a
+# matter of copying the three services and an Alloy scrape block.
+
+x-s3-env: &s3-env
+  AWS_ACCESS_KEY_ID: rustfsadmin
+  AWS_SECRET_ACCESS_KEY: rustfsadmin
+  AWS_ENDPOINT_URL: http://rustfs:9000
+  AWS_ALLOW_HTTP: "true"
+  AWS_REGION: us-east-1
+  AWS_EC2_METADATA_DISABLED: "true"
+
+x-otlp-env: &otlp-env
+  RUST_LOG: "${CRABKA_RUST_LOG:-info,object_store::client::retry=warn}"
+  CRABKA_OTLP_ENDPOINT: http://alloy:4317
+  # The traces tier traces its own span ingest, so at ratio 1.0 each generation
+  # of spans produces more spans and the loop diverges. Crabka's demo settled on
+  # 0.05; the forge produces far fewer spans than that fixture, so the same
+  # number is generous.
+  CRABKA_OTLP_SAMPLE_RATIO: "0.05"
+  CRABKA_ADMIN_LISTEN_ADDR: 0.0.0.0:9404
+
+x-crabka-image: &crabka-image
+  image: ${CRABKA_IMAGE:-ghcr.io/robot-head/crabka-demo:latest}
+  restart: unless-stopped
+  # The forge's broker runs on the host, not in this network.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+x-small: &small
+  mem_limit: 1g
+  memswap_limit: 1g
+  cpus: 1
+
+x-medium: &medium
+  mem_limit: 3g
+  memswap_limit: 3g
+  cpus: 2
+
+services:
+  # ---- object store ----------------------------------------------------
+  # Blocks compacted out of the WAL land here. Disposable in the same sense
+  # everything else on local disk is: the WAL topics are the durable copy.
+  rustfs-permissions:
+    image: mirror.gcr.io/library/busybox:1.38
+    <<: *small
+    restart: "no"
+    command: ["sh", "-c", "mkdir -p /data && chown -R 10001:10001 /data"]
+    volumes: ["rustfs-data:/data"]
+
+  rustfs:
+    image: mirror.gcr.io/rustfs/rustfs:latest
+    <<: *medium
+    restart: unless-stopped
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_OBS_LOGS_EXPORT_ENABLED: "false"
+      RUSTFS_OBS_LOG_STDOUT_ENABLED: "false"
+      # Many small parquet blocks rather than a few large objects.
+      RUSTFS_BUFFER_PROFILE: WebWorkload
+      RUSTFS_ALLOCATOR_RECLAIM_ENABLED: "true"
+    ports: ["${O11Y_RUSTFS_PORT:-9000}:9000"]
+    volumes: ["rustfs-data:/data"]
+    depends_on:
+      rustfs-permissions: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  rustfs-setup:
+    image: mirror.gcr.io/amazon/aws-cli:latest
+    <<: *small
+    restart: "no"
+    environment: { <<: *s3-env }
+    depends_on:
+      rustfs: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "/bootstrap.sh"]
+    volumes: ["./rustfs/bootstrap.sh:/bootstrap.sh:ro"]
+
+  # ---- WAL topics ------------------------------------------------------
+  # The broker does not auto-create topics: producing to one that does not
+  # exist returns NOT_LEADER_OR_FOLLOWER rather than creating it. These are
+  # crabka's internal topics rather than the forge's, so `crabforge bootstrap`
+  # does not own them.
+  #
+  # The ACL grant is not optional, and the reason is a genuine interaction
+  # between two crabka subsystems. The logs querier checks that the querying
+  # tenant has READ on the logs WAL topic — but it *skips* the check entirely
+  # when the cluster has no ACLs at all, which is why crabka's own demo works
+  # without any. A forge always has some: `crabka gres create-tenant` seeds a
+  # set for `User:gres-<tenant>` when the database tenant is created. So the
+  # moment gres exists, the check starts running, finds nothing for the
+  # observability tenant, and every log query returns `forbidden`.
+  topic-setup:
+    image: mirror.gcr.io/apache/kafka:4.3.1
+    <<: *small
+    restart: "no"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        BS=${FORGE_BOOTSTRAP:-host.docker.internal:9092};
+        for t in __crabka_metrics_wal __crabka_traces_wal __crabka_observability_logs_wal; do
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$$BS"
+        --create --if-not-exists --topic "$$t" --partitions 1 --replication-factor 1
+        --config retention.ms=${O11Y_WAL_RETENTION_MS:-900000}
+        --config segment.bytes=${O11Y_WAL_SEGMENT_BYTES:-67108864} || exit 1;
+        /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$$BS" --add
+        --allow-principal User:${O11Y_TENANT:-forge}
+        --operation Read --operation Describe --topic "$$t" || exit 1;
+        done; echo "observability WAL topics ready"
+
+  # ---- metrics (Prometheus-compatible) ---------------------------------
+  metrics-distributor:
+    <<: [*crabka-image, *medium]
+    command: ["crabka-metrics", "--target=distributor", "--listen=0.0.0.0:4041", "--bootstrap=${FORGE_BOOTSTRAP:-host.docker.internal:9092}"]
+    environment:
+      <<: *otlp-env
+      OTEL_SERVICE_NAME: metrics-distributor
+    depends_on:
+      topic-setup: { condition: service_completed_successfully }
+
+  metrics-compactor:
+    <<: [*crabka-image, *small]
+    command: ["crabka-metrics", "--target=compactor", "--object-store-url=s3://crabka-metrics", "--bootstrap=${FORGE_BOOTSTRAP:-host.docker.internal:9092}", "--compactor-retention-ms=${O11Y_METRICS_RETENTION_MS:-86400000}"]
+    environment:
+      <<: [*s3-env, *otlp-env]
+      OTEL_SERVICE_NAME: metrics-compactor
+    depends_on:
+      rustfs-setup: { condition: service_completed_successfully }
+      topic-setup: { condition: service_completed_successfully }
+
+  metrics-querier:
+    <<: [*crabka-image, *medium]
+    command: ["crabka-metrics-service", "--target=querier", "--listen=0.0.0.0:9090", "--object-store-url=s3://crabka-metrics", "--manifest-prefix=metrics", "--wal-bootstrap=${FORGE_BOOTSTRAP:-host.docker.internal:9092}"]
+    environment:
+      <<: [*s3-env, *otlp-env]
+      OTEL_SERVICE_NAME: metrics-querier
+    ports: ["${O11Y_METRICS_PORT:-9090}:9090"]
+    depends_on:
+      rustfs-setup: { condition: service_completed_successfully }
+      topic-setup: { condition: service_completed_successfully }
+
+  # ---- traces (Tempo-compatible) ---------------------------------------
+  traces-distributor:
+    <<: [*crabka-image, *medium]
+    command: ["crabka-traces", "--target=distributor", "--bootstrap=${FORGE_BOOTSTRAP:-host.docker.internal:9092}", "--listen=0.0.0.0:3200", "--grpc-listen=0.0.0.0:4317", "--otlp-http-listen=0.0.0.0:4318"]
+    environment:
+      <<: *otlp-env
+      OTEL_SERVICE_NAME: traces-distributor
+    depends_on:
+      topic-setup: { condition: service_completed_successfully }
+
+  traces-block-builder:
+    <<: [*crabka-image, *medium]
+    command: ["crabka-traces", "--target=block-builder", "--bootstrap=${FORGE_BOOTSTRAP:-host.docker.internal:9092}", "--object-store-url=s3://crabka-traces"]
+    environment:
+      <<: [*s3-env, *otlp-env]
+      OTEL_SERVICE_NAME: traces-block-builder
+    depends_on:
+      rustfs-setup: { condition: service_completed_successfully }
+      topic-setup: { condition: service_completed_successfully }
+
+  traces-querier:
+    <<: [*crabka-image, *medium]
+    command: ["crabka-traces", "--target=querier", "--listen=0.0.0.0:3200", "--object-store-url=s3://crabka-traces"]
+    environment:
+      <<: [*s3-env, *otlp-env]
+      OTEL_SERVICE_NAME: traces-querier
+    ports: ["${O11Y_TRACES_PORT:-3200}:3200"]
+    depends_on:
+      rustfs-setup: { condition: service_completed_successfully }
+
+  # ---- logs (Loki-compatible) ------------------------------------------
+  logs-distributor:
+    <<: [*crabka-image, *medium]
+    command: ["crabka-observability", "--target=distributor", "--listen-addr=0.0.0.0:3100", "--wal-bootstrap-server=${FORGE_BOOTSTRAP:-host.docker.internal:9092}", "--object-store-url=s3://crabka-logs"]
+    environment:
+      <<: [*s3-env, *otlp-env]
+      OTEL_SERVICE_NAME: logs-distributor
+    depends_on:
+      rustfs-setup: { condition: service_completed_successfully }
+      topic-setup: { condition: service_completed_successfully }
+
+  logs-compactor:
+    <<: [*crabka-image, *small]
+    command: ["crabka-observability", "--target=compactor", "--wal-bootstrap-server=${FORGE_BOOTSTRAP:-host.docker.internal:9092}", "--object-store-url=s3://crabka-logs", "--index-prefix=logs"]
+    environment:
+      <<: [*s3-env, *otlp-env]
+      OTEL_SERVICE_NAME: logs-compactor
+    depends_on:
+      rustfs-setup: { condition: service_completed_successfully }
+      topic-setup: { condition: service_completed_successfully }
+
+  logs-querier:
+    # `--wal-group-id` must differ from the compactor's default: both subscribe
+    # to the same single-partition WAL, and a shared group id makes them fight
+    # over the one partition until the querier spins on REBALANCE_IN_PROGRESS.
+    # `--querier-index-source=tenant-object-store-shards` reads the shard
+    # catalogue the compactor writes; the default reads the querier's own empty
+    # disk and returns no streams at all.
+    <<: [*crabka-image, *medium]
+    command: ["crabka-observability", "--target=querier", "--listen-addr=0.0.0.0:3100", "--wal-bootstrap-server=${FORGE_BOOTSTRAP:-host.docker.internal:9092}", "--object-store-url=s3://crabka-logs", "--index-prefix=logs", "--querier-index-source=tenant-object-store-shards", "--wal-group-id=crabka-observability-querier"]
+    environment:
+      <<: [*s3-env, *otlp-env]
+      OTEL_SERVICE_NAME: logs-querier
+    ports: ["${O11Y_LOGS_PORT:-3100}:3100"]
+    depends_on:
+      rustfs-setup: { condition: service_completed_successfully }
+      topic-setup: { condition: service_completed_successfully }
+
+  # ---- collector + dashboards ------------------------------------------
+  alloy:
+    image: mirror.gcr.io/grafana/alloy:v1.18.0
+    <<: *small
+    restart: unless-stopped
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "/etc/alloy/config.alloy"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      FORGE_ADMIN: ${FORGE_ADMIN:-host.docker.internal:7101}
+      FORGE_BROKER_ADMIN: ${FORGE_BROKER_ADMIN:-host.docker.internal:9404}
+    volumes:
+      - "./alloy/config.alloy:/etc/alloy/config.alloy:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    ports:
+      - "${O11Y_ALLOY_PORT:-12345}:12345"
+      # OTLP in, for the forge on the host.
+      - "${O11Y_OTLP_GRPC_PORT:-4317}:4317"
+      - "${O11Y_OTLP_HTTP_PORT:-4318}:4318"
+
+  grafana:
+    image: mirror.gcr.io/grafana/grafana:13.1
+    <<: *medium
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor"
+      GF_PLUGINS_DISABLE_PLUGINS: "elasticsearch"
+    ports: ["${O11Y_GRAFANA_PORT:-3000}:3000"]
+    volumes:
+      - "./grafana/provisioning:/etc/grafana/provisioning:ro"
+    depends_on:
+      - metrics-querier
+      - traces-querier
+      - logs-querier
+
+volumes:
+  rustfs-data:

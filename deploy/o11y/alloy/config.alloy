@@ -1,0 +1,145 @@
+// Grafana Alloy: the one collector.
+//
+// Three jobs, and nothing else:
+//
+//   1. receive OTLP from the forge (spans and any OTLP metrics) and hand the
+//      spans to the traces distributor,
+//   2. scrape the forge's Prometheus endpoint and remote-write it into the
+//      metrics distributor,
+//   3. tail this stack's container logs into the logs distributor.
+//
+// The forge itself runs on the host rather than in this compose project, which
+// is why its addresses come from the environment. Its own logs go to stderr; if
+// you want them in Loki, run the forge under a container in this network or
+// point `loki.source.file` at wherever you have redirected them.
+
+// ---------------- OTLP in ----------------
+otelcol.receiver.otlp "in" {
+	grpc {
+		endpoint = "0.0.0.0:4317"
+	}
+
+	http {
+		endpoint = "0.0.0.0:4318"
+	}
+
+	output {
+		metrics = [otelcol.exporter.prometheus.otlp_metrics.input]
+		traces  = [otelcol.processor.batch.traces.input]
+	}
+}
+
+otelcol.exporter.prometheus "otlp_metrics" {
+	forward_to = [prometheus.remote_write.crabka.receiver]
+
+	add_metric_suffixes              = false
+	include_scope_info               = false
+	include_scope_labels             = false
+	include_target_info              = false
+	resource_to_telemetry_conversion = true
+}
+
+// Batched so the distributor's produce path is invoked once per batch rather
+// than once per span.
+otelcol.processor.batch "traces" {
+	output {
+		traces = [otelcol.exporter.otlphttp.traces.input]
+	}
+}
+
+otelcol.exporter.otlphttp "traces" {
+	client {
+		endpoint = "http://traces-distributor:4318"
+		headers  = {"X-Scope-OrgID" = "forge"}
+
+		tls {
+			insecure = true
+		}
+	}
+}
+
+// ---------------- Metrics: scrape the forge's admin port ----------------
+// One target, because the forge is one process. When the roles are split — a
+// separate webhook deliverer, a fleet of runners — each gets its own admin
+// port and its own entry here, and the `job` label is what the dashboards
+// group by.
+prometheus.scrape "forge" {
+	targets = [
+		{__address__ = sys.env("FORGE_ADMIN"), job = "crabforge-server"},
+	]
+	scrape_interval = "15s"
+	forward_to      = [prometheus.remote_write.crabka.receiver]
+}
+
+// The observability services report on themselves on 9404. Worth having: a
+// projection lag that is really a metrics-ingest lag is an easy hour to lose.
+prometheus.scrape "crabka" {
+	targets = [
+		{__address__ = "metrics-distributor:9404", job = "metrics-distributor"},
+		{__address__ = "metrics-querier:9404", job = "metrics-querier"},
+		{__address__ = "metrics-compactor:9404", job = "metrics-compactor"},
+		{__address__ = "traces-distributor:9404", job = "traces-distributor"},
+		{__address__ = "traces-querier:9404", job = "traces-querier"},
+		{__address__ = "traces-block-builder:9404", job = "traces-block-builder"},
+		{__address__ = "logs-distributor:9404", job = "logs-distributor"},
+		{__address__ = "logs-querier:9404", job = "logs-querier"},
+		{__address__ = "logs-compactor:9404", job = "logs-compactor"},
+	]
+	scrape_interval = "15s"
+	forward_to      = [prometheus.remote_write.crabka.receiver]
+}
+
+// The broker the forge and this stack share. Its Prometheus endpoint is only
+// there if it was started with one — `just broker-o11y` passes the flag.
+prometheus.scrape "broker" {
+	targets = [
+		{__address__ = sys.env("FORGE_BROKER_ADMIN"), job = "broker"},
+	]
+	scrape_interval = "15s"
+	forward_to      = [prometheus.remote_write.crabka.receiver]
+}
+
+prometheus.remote_write "crabka" {
+	endpoint {
+		url     = "http://metrics-distributor:4041/api/v1/push"
+		headers = {"X-Scope-OrgID" = "forge"}
+	}
+}
+
+// ---------------- Logs: this stack's own containers ----------------
+discovery.docker "containers" {
+	host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+	targets = discovery.docker.containers.targets
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+		regex         = "crabforge-o11y"
+		action        = "keep"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "service_name"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "job"
+	}
+}
+
+loki.source.docker "containers" {
+	host       = "unix:///var/run/docker.sock"
+	targets    = discovery.relabel.containers.output
+	forward_to = [loki.write.crabka.receiver]
+}
+
+loki.write "crabka" {
+	endpoint {
+		url     = "http://logs-distributor:3100/loki/api/v1/push"
+		headers = {"X-Scope-OrgID" = "forge"}
+	}
+}

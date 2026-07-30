@@ -1,0 +1,219 @@
+# The tier that scales.
+#
+# CI runners hold no writer identity that has to be unique, so "more of them" is
+# a valid answer to "the queue is long" — which is the whole reason the work
+# queue is a KIP-932 share group rather than a consumer group. A consumer group
+# partitions ownership, so a fourth runner against three partitions would sit
+# idle; a share group hands each job to whoever asks next.
+#
+# Scaling to *zero* is the same property read backwards. A share group with no
+# members is not an error state; jobs accumulate in the topic and are handed out
+# when a member appears.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crabforge-runner
+  namespace: crabforge
+# The runner needs the API to create job pods, so this token is mounted — the
+# one exception to `automountServiceAccountToken: false` everywhere else, and
+# the reason the RBAC below is narrow and the jobs themselves land in a
+# different namespace.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: crabforge-runner
+  namespace: crabforge-ci
+rules:
+  # Create a pod, watch it start, exec into it, delete it. Nothing else, and
+  # nothing in the forge's own namespace: a runner that could read Secrets is a
+  # runner that could hand them to a pull request.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: crabforge-runner
+  namespace: crabforge-ci
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: crabforge-runner
+subjects:
+  - kind: ServiceAccount
+    name: crabforge-runner
+    namespace: crabforge
+---
+# What makes `--network=none` true on a cluster.
+#
+# There is no per-pod switch for this: pod networking belongs to the CNI, so
+# denying it is a policy object — and one that a CNI without NetworkPolicy
+# support will accept and silently ignore. Check that yours enforces it
+# (Calico, Cilium, and most managed offerings do; the default kindnet does
+# not) before believing this file.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: crabforge-ci
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  # No rules at all: nothing in, nothing out. A workflow that needs to fetch
+  # dependencies needs an explicit egress policy, which is a decision to make
+  # per forge rather than a default to inherit.
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ci-jobs
+  namespace: crabforge-ci
+spec:
+  hard:
+    pods: "50"
+    requests.cpu: "20"
+    requests.memory: 50Gi
+    limits.cpu: "100"
+    limits.memory: 100Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crabforge-runner
+  namespace: crabforge
+spec:
+  # Managed by the ScaledObject below, which is why this says 0 rather than a
+  # number: whatever is written here is overwritten within a polling interval,
+  # and 0 is the honest starting point.
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: crabforge-runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: crabforge-runner
+    spec:
+      serviceAccountName: crabforge-runner
+      # A job that outlives its runner is a job nobody is watching, and the pod
+      # deadline is minutes. Long enough for the current job, short enough that
+      # a scale-down is not indefinite.
+      terminationGracePeriodSeconds: 300
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+        - name: runner
+          image: ghcr.io/crabforge/crabforge:latest
+          args: ["crabforge-server"]
+          envFrom:
+            - configMapRef:
+                name: crabforge
+          env:
+            - name: CRABFORGE_ROLE
+              value: runner
+            - name: CRABFORGE_CI_SANDBOX
+              value: kubernetes
+            - name: CRABFORGE_CI_NAMESPACE
+              value: crabforge-ci
+            # One job at a time per pod, so the scaler's arithmetic is
+            # "replicas ≈ queued jobs" rather than a number it has to be told.
+            - name: CRABFORGE_CI_RUNNERS
+              value: "1"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: forge-gres-password
+                  key: password
+            - name: CRABFORGE_DSN
+              value: "host=forge-gres.crabforge.svc port=6432 user=forge dbname=crab"
+          ports:
+            - name: http
+              containerPort: 7000
+            - name: admin
+              containerPort: 7101
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# KEDA. Scales the runner Deployment on the depth of the CI queue.
+#
+# The metric is `forge_ci_jobs_queued`, which the forge derives from gres rather
+# than from the broker: a share group publishes no backlog gauge, and crabka's
+# `effective_backlog` (MSG-4) does not exist yet. Counting rows is also the more
+# honest number — it is the queue as the forge understands it, including jobs
+# whose records the broker has already handed out to a runner that then died.
+#
+# The query must resolve to a single value, which is why that gauge carries no
+# labels.
+# **This needs a Prometheus-compatible endpoint that these manifests do not
+# create.** `deploy/o11y` is Docker Compose; there is no in-cluster metrics
+# querier here. Until you deploy one — crabka's `crabka-metrics-service`, or
+# any Prometheus scraping the `crabforge-admin` Service — point
+# `serverAddress` at whatever you do run.
+#
+# Getting that wrong used to be silent and expensive: a trigger that errors
+# leaves the Deployment at `minReplicaCount`, which is zero, so CI would
+# accept work and never run any of it. `fallback` below is what makes the
+# failure safe instead — two runners keep working while someone notices.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: crabforge-runner
+  namespace: crabforge
+spec:
+  scaleTargetRef:
+    name: crabforge-runner
+  minReplicaCount: 0
+  maxReplicaCount: 20
+  pollingInterval: 15
+  fallback:
+    # After three consecutive failed polls, hold at two runners rather than
+    # scaling to zero on a metric nobody is serving.
+    failureThreshold: 3
+    replicas: 2
+  # Five minutes of an empty queue before the last runner goes. Shorter would
+  # trade a container start onto the front of every push that follows a quiet
+  # spell, which is the latency a developer actually notices.
+  cooldownPeriod: 300
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://metrics-querier.observability.svc:9090
+        query: max(forge_ci_jobs_queued)
+        # One queued job per replica. The gauge counts jobs rather than seconds
+        # of work, so this scales to the number waiting and lets the cooldown
+        # absorb the rest.
+        threshold: "1"
+        # crabka's metrics querier is multi-tenant and reads the tenant from a
+        # header, like every other query against it. Without this the scaler
+        # gets an empty result, reads it as zero, and scales to nothing.
+        customHeaders: "X-Scope-OrgID=forge"

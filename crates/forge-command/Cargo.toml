@@ -12,7 +12,9 @@ workspace = true
 
 [dependencies]
 forge-bus.workspace = true
+crabka-client-admin.workspace = true
 forge-events.workspace = true
+forge-topics.workspace = true
 forge-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -22,4 +24,5 @@ tracing.workspace = true
 
 [dev-dependencies]
 assert2.workspace = true
+forge-topics.workspace = true
 forge-testkit.workspace = true

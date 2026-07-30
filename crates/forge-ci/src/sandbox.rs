@@ -16,6 +16,20 @@
 //! script does and therefore what people expect. Each step's output is streamed
 //! rather than collected, so a job that hangs still shows what it managed
 //! before it did.
+//!
+//! ## The workspace is empty
+//!
+//! No sandbox checks the repository out. A job starts in an empty directory and
+//! sees the commit that triggered it only as `head_oid` in its environment, so
+//! `cargo test` in a workflow tests nothing. Every sandbox is like this — the
+//! container one as much as the pod one — which is why the tests, which run
+//! `echo` and `exit 7`, all pass.
+//!
+//! What is missing is a checkout step: a short-lived job token, a shallow clone
+//! of the pushed commit from the forge's own smart-HTTP endpoint, and an egress
+//! rule that permits reaching it, since `deploy/k8s` denies all traffic by
+//! default. Until that exists, Crab Actions runs workflows rather than builds.
+//! `TODO(forge:job-checkout)`.
 
 use std::{collections::BTreeMap, path::PathBuf, process::Stdio, time::Duration};
 
@@ -113,16 +127,21 @@ impl StepResult {
 ///
 /// The callback is `Send` because a runner is spawned onto the executor, and a
 /// future holding a non-`Send` reference across an await cannot be.
-#[allow(async_fn_in_trait)]
+///
+/// The returned future is spelled out rather than written as an `async fn` for
+/// the same reason: `async fn` in a trait leaves the future's auto traits
+/// unbounded, so a caller generic over `Sandbox` cannot spawn it. That only
+/// shows up when there is more than one implementation to be generic over,
+/// which is what the Kubernetes sandbox made true.
 pub trait Sandbox {
     /// Run one shell command, streaming its output.
-    async fn run_step(
+    fn run_step(
         &self,
         command: &str,
         env: &BTreeMap<String, String>,
         timeout: Duration,
         on_line: &mut (dyn FnMut(&str) + Send),
-    ) -> StepResult;
+    ) -> impl Future<Output = StepResult> + Send;
 }
 
 /// Runs steps as child processes on this host.

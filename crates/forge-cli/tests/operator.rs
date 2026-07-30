@@ -31,6 +31,16 @@ const BLACKHOLE: &str = "203.0.113.1";
 /// `RUST_LOG=debug` would gain `tokio_postgres` query logging that a naive
 /// search matches instead of the report.
 async fn crabforge(dsn: &str, args: &[&str]) -> (bool, String) {
+    crabforge_at(dsn, BLACKHOLE_BOOTSTRAP, args).await
+}
+
+/// A bootstrap address nothing answers on, for the tests that only care about
+/// gres. Spelled out rather than left to the default so a broker someone
+/// happens to be running on 9092 cannot change what these tests observe.
+const BLACKHOLE_BOOTSTRAP: &str = "203.0.113.1:9092";
+
+/// Run `crabforge` against a specific broker as well as a specific database.
+async fn crabforge_at(dsn: &str, bootstrap: &str, args: &[&str]) -> (bool, String) {
     let binary = env!("CARGO_BIN_EXE_crabforge");
     let output = Command::new(binary)
         .env("RUST_LOG", "info")
@@ -39,6 +49,8 @@ async fn crabforge(dsn: &str, args: &[&str]) -> (bool, String) {
         .env("NO_COLOR", "1")
         .arg("--dsn")
         .arg(dsn)
+        .arg("--bootstrap")
+        .arg(bootstrap)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -303,6 +315,62 @@ async fn migrate_refuses_a_database_migrated_by_a_newer_build() {
     let (_, output) = crabforge(&dsn, &["doctor"]).await;
     let line = report_line(&output, "schema").unwrap_or("<none>");
     check!(line.contains("newer build"), "doctor disagreed: {line:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_doctor_names_the_reformat_when_share_groups_are_missing() {
+    // The one failure in this CLI that a config change cannot fix.
+    // `share.version` is written at format time, so the fix has to say "format
+    // again" — and it has to say it while the log is still empty, which is only
+    // possible if the doctor reports it at all.
+    let broker = forge_testkit::TestBroker::start().await;
+
+    let (_, output) = crabforge_at(
+        &format!("host={BLACKHOLE} port=5433 user=forge dbname=crab"),
+        &broker.bootstrap(),
+        &["doctor"],
+    )
+    .await;
+
+    // The broker itself is up, so this is not a connectivity failure being
+    // reported twice under a second name.
+    check!(
+        passed(&output, "broker"),
+        "the broker check failed:\n{output}"
+    );
+
+    let line = report_line(&output, "share groups").unwrap_or("<no share groups line>");
+    check!(
+        !passed(&output, "share groups"),
+        "an in-process broker has share.version=0; the check should say so: {line:?}"
+    );
+    check!(
+        output.contains("crabka format --feature share.version=1"),
+        "the fix did not name the command that would set it:\n{output}"
+    );
+    check!(
+        output.contains("cannot be raised in place"),
+        "the fix did not say that a reformat is the only route:\n{output}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unreachable_broker_does_not_look_like_a_missing_feature() {
+    // Two problems, two fixes: reformatting a broker that is merely down would
+    // destroy a log that is fine.
+    let dsn = format!("host={BLACKHOLE} port=5433 user=forge dbname=crab");
+
+    let (_, output) = crabforge(&dsn, &["doctor"]).await;
+
+    let line = report_line(&output, "share groups").unwrap_or("<none>");
+    check!(
+        line.contains("could not read the broker's features"),
+        "expected an unreachable-broker report; got: {line:?}"
+    );
+    check!(
+        !line.contains("formatted without"),
+        "a broker that is down was reported as needing a reformat: {line:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

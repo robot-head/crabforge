@@ -18,8 +18,22 @@
 //! Delivery is at-least-once by construction — a runner that dies mid-job has
 //! its job redelivered — so nothing here tries to be exactly-once. The
 //! compare-and-swap in `CiStore::claim_job` is what makes that safe.
+//!
+//! ## Why a poll's whole batch is kept
+//!
+//! A runner executes one job at a time, but a `ShareFetch` returns up to 500
+//! records and every one of them is *acquired* by this consumer the moment it
+//! arrives — crabka's client hard-codes that limit, so there is no asking for
+//! one. Returning the first record and dropping the rest of the batch on the
+//! floor does not un-acquire them: they sit locked for the broker's 30-second
+//! `record_lock_duration`, then time out, and a timed-out acquisition counts as
+//! a delivery. At the default `max_delivery_attempts` of 5 a job pushed in a
+//! burst of six can exhaust its attempts and be archived by the broker without
+//! ever having been run, which the orchestrator's sweep then records as an
+//! infrastructure failure. So the batch is kept and drained one lease at a
+//! time.
 
-use std::time::Duration;
+use std::{collections::VecDeque, time::Duration};
 
 use crabka_client_consumer::{
     ConsumerError, ShareAckMode, ShareAckType, ShareConsumer, ShareConsumerRecord,
@@ -92,6 +106,10 @@ impl Lease {
 /// Runners' view of the queue.
 pub struct JobQueue {
     consumer: ShareConsumer,
+    /// Records acquired by the last poll and not yet handed out. See the
+    /// module docs: these are already locked to this consumer whether or not
+    /// anyone asks for them.
+    acquired: VecDeque<ShareConsumerRecord>,
 }
 
 impl JobQueue {
@@ -107,17 +125,26 @@ impl JobQueue {
             .ack_mode(ShareAckMode::Explicit)
             .build()
             .await?;
-        Ok(Self { consumer })
+        Ok(Self {
+            consumer,
+            acquired: VecDeque::new(),
+        })
     }
 
     /// Wait for a job, or `None` if none arrived.
+    ///
+    /// Hands out one lease at a time from whatever the last poll acquired, and
+    /// only polls again once that is exhausted.
     ///
     /// A record that will not decode is rejected rather than released: it can
     /// never become runnable, and releasing it would put it at the head of the
     /// queue forever.
     pub async fn next(&mut self, wait: Duration) -> Result<Option<Lease>, QueueError> {
-        let records = self.consumer.poll(wait).await?;
-        for record in records {
+        if self.acquired.is_empty() {
+            self.acquired.extend(self.consumer.poll(wait).await?);
+        }
+
+        while let Some(record) = self.acquired.pop_front() {
             let decoded = record
                 .value
                 .as_deref()
@@ -142,6 +169,16 @@ impl JobQueue {
         }
         self.consumer.commit().await?;
         Ok(None)
+    }
+
+    /// How many acquired jobs are waiting behind the one just handed out.
+    ///
+    /// Exposed for the runner's queue-depth gauge: this consumer's share of the
+    /// backlog is the only part of it visible from here, since a share group
+    /// does not tell a member what else is unassigned.
+    #[must_use]
+    pub fn buffered(&self) -> usize {
+        self.acquired.len()
     }
 
     /// Say how a leased job went.

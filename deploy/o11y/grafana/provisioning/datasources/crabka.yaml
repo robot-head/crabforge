@@ -1,0 +1,44 @@
+# The three query APIs crabka's observability services speak. Grafana talks to
+# them with its stock Prometheus, Tempo and Loki datasources — the point of
+# wire compatibility is that nothing here is crabka-specific except the URLs.
+apiVersion: 1
+datasources:
+  - name: Crabka Metrics
+    uid: crabka-prom
+    type: prometheus
+    access: proxy
+    url: http://metrics-querier:9090
+    isDefault: true
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: forge
+    editable: false
+  - name: Crabka Traces
+    uid: crabka-tempo
+    type: tempo
+    access: proxy
+    url: http://traces-querier:3200
+    jsonData:
+      httpMethod: GET
+      httpHeaderName1: X-Scope-OrgID
+      tracesToLogsV2:
+        datasourceUid: crabka-loki
+        spanStartTimeShift: -2m
+        spanEndTimeShift: 2m
+        filterByTraceID: true
+    secureJsonData:
+      httpHeaderValue1: forge
+    editable: false
+  - name: Crabka Logs
+    uid: crabka-loki
+    type: loki
+    access: proxy
+    url: http://logs-querier:3100
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+      manageAlerts: false
+      maxLines: 200
+    secureJsonData:
+      httpHeaderValue1: forge
+    editable: false

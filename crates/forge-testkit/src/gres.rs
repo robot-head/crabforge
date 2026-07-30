@@ -134,10 +134,11 @@ pub async fn require_gres() -> Option<Gres> {
     match Gres::try_start().await {
         Some(gres) => Some(gres),
         None => {
-            eprintln!(
-                "SKIP: crabka-gres not found or failed to start. Build it with\n  \
+            crate::skip(
+                "crabka-gres",
+                "not found or failed to start. Build it with\n  \
                  cargo build --manifest-path $CRABKA_DIR/Cargo.toml -p crabka-gres --bin crabka-gres\n  \
-                 (or set CRABFORGE_GRES_BIN)"
+                 (or set CRABFORGE_GRES_BIN)",
             );
             None
         }

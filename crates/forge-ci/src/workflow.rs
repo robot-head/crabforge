@@ -164,6 +164,25 @@ impl Workflow {
                     format!("job `{name}` has an empty `runs-on`"),
                 ));
             }
+            for key in job.env.keys() {
+                // Rejected here rather than at execution, because what happens
+                // otherwise depends on the sandbox: a container takes
+                // `CACHE-DIR=x` as an environment entry and shrugs, while the
+                // pod sandbox has no `--env` and builds a shell `export`, where
+                // the same key is a syntax error that kills every step before
+                // it runs. A workflow should not mean different things in
+                // different deployments.
+                if !is_env_name(key) {
+                    return Err(WorkflowError::invalid(
+                        path,
+                        format!(
+                            "job `{name}` has an environment variable named `{key}`; \
+                             names may contain only letters, digits and underscores, \
+                             and may not start with a digit"
+                        ),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -178,6 +197,17 @@ impl Workflow {
                 .to_string()
         })
     }
+}
+
+/// Whether `name` is something a POSIX shell will accept after `export`.
+///
+/// The portable subset: letters, digits and underscore, not starting with a
+/// digit. Deliberately narrower than what a container runtime would take, so a
+/// workflow behaves the same whichever sandbox runs it.
+fn is_env_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]
@@ -298,5 +328,28 @@ jobs:
     fn malformed_yaml_is_an_error_and_not_a_panic() {
         check!(Workflow::parse("w.yml", "\t\tnot: [yaml").is_err());
         check!(Workflow::parse("w.yml", "").is_err());
+    }
+
+    #[test]
+    fn an_environment_name_a_shell_cannot_export_is_rejected() {
+        // The pod sandbox builds `export NAME=value`, so a key that is not a
+        // shell identifier is a syntax error that kills every step in the job
+        // before it runs — while a container would have accepted it. Catch it
+        // where the workflow is read, so the answer does not depend on where
+        // the forge happens to be deployed.
+        for bad in ["CACHE-DIR", "2FAST", "HAS SPACE", "semi;colon", ""] {
+            let yaml = format!(
+                "on: [push]\njobs:\n  test:\n    env:\n      \"{bad}\": x\n    steps:\n      - run: true\n"
+            );
+            let err = Workflow::parse("w.yml", &yaml);
+            check!(err.is_err(), "`{bad}` was accepted");
+        }
+    }
+
+    #[test]
+    fn ordinary_environment_names_still_parse() {
+        let yaml = "on: [push]\njobs:\n  test:\n    env:\n      RUST_LOG: debug\n      _PRIVATE: 1\n      X2: y\n    steps:\n      - run: true\n";
+        let workflow = Workflow::parse("w.yml", yaml).expect("valid");
+        check!(workflow.jobs["test"].env.len() == 3);
     }
 }

@@ -37,7 +37,7 @@ fn job(image: &str) -> QueuedJob {
 /// Run one command in a container, or `None` when docker is unavailable.
 async fn run(command: &str, env: BTreeMap<String, String>) -> Option<(StepOutcome, Vec<String>)> {
     if !docker_available().await {
-        eprintln!("SKIP: no docker daemon");
+        forge_testkit::skip("docker", "daemon is not reachable");
         return None;
     }
     let root = tempfile::tempdir().unwrap();
@@ -144,7 +144,7 @@ async fn only_the_declared_environment_reaches_the_container() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_missing_image_is_an_infrastructure_failure() {
     if !docker_available().await {
-        eprintln!("SKIP: no docker daemon");
+        forge_testkit::skip("docker", "daemon is not reachable");
         return;
     }
     let root = tempfile::tempdir().unwrap();

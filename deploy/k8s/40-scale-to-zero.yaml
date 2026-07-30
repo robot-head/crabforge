@@ -1,0 +1,96 @@
+# Scale-to-zero for the database tier.
+#
+# Optional, and worth reading the caveat below before applying: this does less
+# than its name suggests for a forge that is running.
+#
+# `crabka-gres-activator` accepts PostgreSQL connections, reads the tenant out
+# of the startup message, writes a resume request to `__gres_tenants`, holds the
+# connection open until the tenant's compute is up, and then pipes bytes to it.
+# A client sees a connection that took a while to establish. Nothing in the
+# forge has to know it exists — it is a DSN pointing somewhere else.
+#
+# ## The caveat
+#
+# A tenant is idle when nothing is connected to it, and the forge holds
+# persistent connections: one per projector, one per webhook worker, one for the
+# queue-depth gauge. A running forge therefore never lets its tenant go idle,
+# and this buys nothing.
+#
+# What it is for is a forge that is itself scaled to zero — a demo, a per-branch
+# preview environment, an internal forge nobody touches at night. Scale the
+# `crabforge` Deployment to zero and suspend the tenant
+# (`GresTenant.spec.suspended: true`), and the database compute goes away; the
+# first connection after it comes back wakes it. Something still has to wake the
+# *forge*, which is a separate problem this file does not solve — Knative
+# Serving or an equivalent HTTP activator in front of the Service.
+#
+# Cold start is the whole write-ahead log: gres's checkpointing is stubbed
+# upstream, so a resumed tenant replays from the beginning. That is seconds for
+# a small forge and the thing to measure before relying on this for a large one.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gres-activator
+  namespace: crabforge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gres-activator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gres-activator
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+      containers:
+        - name: activator
+          image: ghcr.io/robot-head/crabka-gres-activator:latest
+          args:
+            - --listen=0.0.0.0:5432
+            - --bootstrap=forge-kafka-bootstrap.crabforge.svc:9092
+            # How the activator finds a woken tenant. The operator names a
+            # tenant's compute Service after the tenant, so the forge's tenant
+            # — `forge` — resolves to `forge-gres`.
+            - --backend-endpoint-template={tenant}-gres.crabforge.svc:5432
+            # Long enough for a cold replay of the whole write-ahead log, which
+            # is what a resume costs until crabka's gres checkpointing lands.
+            # A client sees this as a slow connect; a client that gives up
+            # earlier sees a failed one.
+            - --cold-start-timeout-ms=120000
+          ports:
+            - name: postgres
+              containerPort: 5432
+          resources:
+            requests: { cpu: "50m", memory: 64Mi }
+            limits: { cpu: "500m", memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gres-activator
+  namespace: crabforge
+spec:
+  selector:
+    app.kubernetes.io/name: gres-activator
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+# To route the forge through it, change `CRABFORGE_DSN` in the ConfigMap in
+# 20-forge.yaml to:
+#
+#   host=gres-activator.crabforge.svc port=5432 user=forge dbname=crab
+#
+# and raise nothing else: the server already waits two minutes for gres on
+# startup, because a cold substrate node replays its log before it listens, and
+# a resumed one does exactly the same thing for the same reason.
