@@ -23,7 +23,7 @@ jobs:
     name: format and clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Nothing here names a Rust version or a component: rust-toolchain.toml
       # pins both, and a workflow that repeated them would eventually disagree
       # with it.
@@ -46,7 +46,7 @@ jobs:
     # ImagePullBackOff on purpose, which takes minutes of doing nothing.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/cache@v4
         with:
@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: bash -n deploy/knative/validate.sh
       - run: docker compose -f deploy/o11y/docker-compose.yml config >/dev/null
 
