@@ -74,6 +74,7 @@ pub async fn list(
     Ok(PullsPage {
         csrf: session::csrf_token(&state, viewer.as_ref()),
         viewer,
+        tab: "pulls",
         owner: record.owner_name.clone(),
         repo: record.name.clone(),
         description: record.description.clone(),
@@ -121,6 +122,7 @@ pub async fn detail(
         .await?
         .into_iter()
         .map(|r| ReviewView {
+            initials: crate::pages::initials(&r.reviewer_name),
             reviewer: r.reviewer_name,
             verdict_label: match r.verdict.as_str() {
                 "approve" => "Approved",
@@ -165,15 +167,17 @@ pub async fn detail(
                 .next()
                 .unwrap_or(&run.workflow)
                 .to_string(),
-            status: run.status.clone(),
             status_class: check_class(&run.status),
+            glyph: check_glyph(&run.status),
+            status: run.status.clone(),
             number: run.number,
             jobs: jobs
                 .iter()
                 .map(|job| CheckJobView {
                     name: job.name.clone(),
-                    status: job.status.clone(),
                     status_class: check_class(&job.status),
+                    glyph: check_glyph(&job.status),
+                    status: job.status.clone(),
                 })
                 .collect(),
         });
@@ -188,6 +192,7 @@ pub async fn detail(
         csrf: session::csrf_token(&state, viewer.as_ref()),
         can_write: viewer.is_some(),
         viewer,
+        tab: "pulls",
         owner: record.owner_name.clone(),
         repo: record.name.clone(),
         description: record.description.clone(),
@@ -217,6 +222,7 @@ pub async fn detail(
         mergeable: mergeability == Mergeable::Clean,
         conflicted: mergeability == Mergeable::Conflict,
         conflicts,
+        author_initials: crate::pages::initials(&pr.author_name),
         author: pr.author_name.clone(),
         body: pr
             .body
@@ -224,6 +230,7 @@ pub async fn detail(
             .map(|b| askama::filters::Safe(forge_render::render_markdown(b, &markdown))),
         source_branch: pr.source_branch.clone(),
         target_branch: pr.target_branch.clone(),
+        head_short: crate::pages::short_oid(&pr.head_oid),
         head_oid: pr.head_oid.clone(),
         merge_commit: pr.merge_commit_oid.clone().unwrap_or_default(),
         merged_by: pr.merged_by_name.clone(),
@@ -399,4 +406,19 @@ fn check_class(status: &str) -> String {
         _ => "unknown",
     }
     .to_string()
+}
+
+/// The mark drawn beside a check's status.
+///
+/// A third channel after the word and the border colour, because the palette is
+/// a mono one: pass and fail differ by two low-chroma tints that a reader with
+/// a colour deficiency may not separate, and the shape is unambiguous.
+fn check_glyph(status: &str) -> &'static str {
+    match status {
+        "success" => "✓",
+        "failed" | "timed_out" => "✕",
+        "infra_failed" => "!",
+        "running" => "◐",
+        _ => "○",
+    }
 }

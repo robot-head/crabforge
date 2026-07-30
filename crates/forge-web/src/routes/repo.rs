@@ -134,11 +134,25 @@ async fn render_tree(
                     format!("/{owner}/{repo}/blob/{revision}/{}", e.path)
                 },
                 icon: pages::icon_for(e.kind),
+                kind: pages::kind_for(e.kind),
                 size: pages::human_size(e.size),
                 name: e.name,
             })
             .collect();
         (entries, readme)
+    };
+
+    // The tip of what is being browsed, for the line above the listing. A
+    // history that cannot be read is not worth failing the page over — the
+    // listing is the page, and the byline is decoration on it.
+    let latest = if empty {
+        None
+    } else {
+        cache
+            .history(&revision, 1, 0)
+            .ok()
+            .and_then(|c| c.into_iter().next())
+            .map(commit_view)
     };
 
     let counters = state.store.issues().counters(&record.repo_id).await?;
@@ -147,6 +161,7 @@ async fn render_tree(
     Ok(into_response(TreePage {
         csrf: session::csrf_token(state, viewer.as_ref()),
         viewer,
+        tab: "code",
         owner: record.owner_name.clone(),
         repo: record.name.clone(),
         description: record.description.clone(),
@@ -159,8 +174,21 @@ async fn render_tree(
         path: path.to_string(),
         empty,
         entries,
+        latest,
         readme,
     }))
+}
+
+/// One commit, as the templates want it.
+fn commit_view(c: forge_git::browse::Commit) -> CommitView {
+    CommitView {
+        oid: c.oid.to_hex(),
+        short: c.short(),
+        summary: c.summary,
+        initials: pages::initials(&c.author_name),
+        author: c.author_name,
+        when: pages::relative_time(c.authored_at),
+    }
 }
 
 /// One file.
@@ -192,6 +220,7 @@ pub async fn blob(
     Ok(into_response(BlobPage {
         csrf: session::csrf_token(&state, viewer.as_ref()),
         viewer,
+        tab: "code",
         owner: record.owner_name.clone(),
         repo: record.name.clone(),
         description: record.description.clone(),
@@ -272,19 +301,14 @@ pub async fn commits(
         .history(&revision, 50, 0)
         .map_err(|e| WebError::Internal(e.to_string()))?
         .into_iter()
-        .map(|c| CommitView {
-            oid: c.oid.to_hex(),
-            short: c.short(),
-            summary: c.summary,
-            author: c.author_name,
-            when: pages::relative_time(c.authored_at),
-        })
+        .map(commit_view)
         .collect();
     let counters = state.store.issues().counters(&record.repo_id).await?;
 
     Ok(into_response(CommitsPage {
         csrf: session::csrf_token(&state, viewer.as_ref()),
         viewer,
+        tab: "commits",
         owner: record.owner_name.clone(),
         repo: record.name.clone(),
         description: record.description.clone(),
@@ -319,6 +343,7 @@ pub async fn commit(
     Ok(into_response(CommitPage {
         csrf: session::csrf_token(&state, viewer.as_ref()),
         viewer,
+        tab: "commits",
         owner: record.owner_name.clone(),
         repo: record.name.clone(),
         description: record.description.clone(),
@@ -328,6 +353,7 @@ pub async fn commit(
         oid: commit.oid.to_hex(),
         summary: commit.summary,
         body: commit.body,
+        initials: pages::initials(&commit.author_name),
         author: commit.author_name,
         when: pages::relative_time(commit.authored_at),
         diff,

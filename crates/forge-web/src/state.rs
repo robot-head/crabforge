@@ -90,6 +90,11 @@ impl Viewer {
     pub fn allows(&self, needed: Scope) -> bool {
         self.scopes.allows(needed)
     }
+
+    /// The monogram the chrome draws in place of an avatar.
+    pub fn initials(&self) -> String {
+        crate::pages::initials(&self.username)
+    }
 }
 
 /// A viewer, or nobody.

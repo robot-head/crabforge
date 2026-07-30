@@ -1,15 +1,23 @@
 {% extends "layout.html" %}
 {% block repo_content %}
-<div class="toolbar"><span class="revision">{{ revision }}</span></div>
-<ul class="commits">
-  {% for c in commits %}
-    <li>
-      <a class="summary" href="/{{ owner }}/{{ repo }}/commit/{{ c.oid }}">{{ c.summary }}</a>
-      <span class="meta">{{ c.author }} committed {{ c.when }}</span>
-      <code class="oid">{{ c.short }}</code>
-    </li>
-  {% else %}
-    <li class="empty">No commits yet.</li>
-  {% endfor %}
-</ul>
+<div class="stack">
+  <div class="toolbar"><span class="revision">{{ revision }}</span></div>
+  <div class="scroll-x">
+  <table class="table commit-table">
+    <thead><tr><th>Commit</th><th>Author</th><th>Commit id</th><th>When</th></tr></thead>
+    <tbody>
+      {% for c in commits %}
+        <tr>
+          <td><a class="summary" href="/{{ owner }}/{{ repo }}/commit/{{ c.oid }}">{{ c.summary }}</a></td>
+          <td class="muted">{{ c.author }}</td>
+          <td><code class="oid">{{ c.short }}</code></td>
+          <td class="muted">{{ c.when }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="empty">No commits yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
 {% endblock %}

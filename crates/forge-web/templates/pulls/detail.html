@@ -1,91 +1,160 @@
 {% extends "../repo/layout.html" %}
 {% block repo_content %}
-<div class="issue-header">
-  <h2>{{ title }} <span class="number">#{{ number }}</span></h2>
-  <p class="meta">
-    <span class="chip {{ state_class }}">{{ state_label }}</span>
-    {{ author }} wants to merge <code>{{ source_branch }}</code> into <code>{{ target_branch }}</code>
-    &middot; {{ commit_count }} commits
-  </p>
-</div>
+<div class="split">
+  <div class="stack">
+    <div class="pr-head">
+      <div class="line">
+        <h1>{{ title }} <span class="number">#{{ number }}</span></h1>
+        <span class="tag {{ state_class }}">{{ state_label }}</span>
+      </div>
+      <span class="byline">
+        {{ author }} wants to merge <code>{{ source_branch }}</code> into <code>{{ target_branch }}</code>
+        &middot; {{ commit_count }} commits &middot; <code>{{ head_short }}</code>
+      </span>
+    </div>
 
-{% match body %}
-  {% when Some with (b) %}<article class="comment"><header>{{ author }}</header><div class="markdown">{{ b }}</div></article>
-  {% when None %}
-{% endmatch %}
+    {% match body %}
+      {% when Some with (b) %}
+        <article class="comment">
+          <header>
+            <span class="monogram monogram-sm monogram-neutral">{{ author_initials }}</span>
+            <span class="who">{{ author }}</span>
+          </header>
+          <div class="markdown">{{ b }}</div>
+        </article>
+      {% when None %}
+    {% endmatch %}
 
-{% if !checks.is_empty() %}
-<section class="checks">
-  <h3>Checks</h3>
-  <ul class="check-list">
-    {% for c in checks %}
-    <li class="check {{ c.status_class }}">
-      <span class="check-name">{{ c.name }} #{{ c.number }}</span>
-      <span class="check-status">{{ c.status }}</span>
-      {% if !c.jobs.is_empty() %}
-      <ul class="check-jobs">
-        {% for j in c.jobs %}
-        <li class="check-job {{ j.status_class }}">
-          <span class="job-name">{{ j.name }}</span>
-          <span class="job-status">{{ j.status }}</span>
-        </li>
-        {% endfor %}
-      </ul>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% if !checks_passed %}
-  <p class="checks-note">Some checks have not passed yet.</p>
-  {% endif %}
-</section>
-{% endif %}
-
-{% for r in reviews %}
-  <article class="comment">
-    <header>{{ r.reviewer }} <span class="chip {{ r.verdict_class }}">{{ r.verdict_label }}</span></header>
-    {% match r.body %}{% when Some with (b) %}<div class="markdown">{{ b }}</div>{% when None %}{% endmatch %}
-  </article>
-{% endfor %}
-
-<div class="merge-box">
-  {% if merged %}
-    <p>Merged as <code>{{ merge_commit }}</code>{% match merged_by %}{% when Some with (m) %} by {{ m }}{% when None %}{% endmatch %}.</p>
-  {% else if !open %}
-    <p>This pull request is closed.</p>
-  {% else if conflicted %}
-    <p class="error">These branches have conflicts that must be resolved.</p>
-    <ul class="conflicts">{% for f in conflicts %}<li><code>{{ f }}</code></li>{% endfor %}</ul>
-    <pre><code>git fetch origin
+    {% if open && conflicted %}
+      <section class="conflict-panel">
+        <header>
+          <svg width="16" height="16" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M128 96v40M128 168h.1M215 200H41a8 8 0 0 1-7-12L121 44a8 8 0 0 1 14 0l87 144a8 8 0 0 1-7 12Z"/></svg>
+          <span>Conflicts against <code>{{ target_branch }}</code></span>
+          <span class="count-note">the forge will not resolve these for you</span>
+        </header>
+        <ul class="conflict-files">{% for f in conflicts %}<li>{{ f }}</li>{% endfor %}</ul>
+        <div class="how">
+          <p>The trial merge was run against the commits this request points at. Rebase or merge locally, push, and the forge re-checks it.</p>
+          <pre><code>git fetch origin
 git checkout {{ source_branch }}
 git merge origin/{{ target_branch }}</code></pre>
-  {% else if mergeable %}
-    {% if can_write %}
-      <form method="post" action="/{{ owner }}/{{ repo }}/pulls/{{ number }}/merge">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="expected_head" value="{{ head_oid }}">
-        <button type="submit">Merge pull request</button>
-      </form>
-    {% else %}
-      <p>These branches can be merged.</p>
+        </div>
+      </section>
     {% endif %}
-  {% else %}
-    <p class="muted">Checking whether these branches can be merged&hellip;</p>
-  {% endif %}
-</div>
 
-{% if can_write && open %}
-  <form method="post" action="/{{ owner }}/{{ repo }}/pulls/{{ number }}/reviews" class="composer">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <textarea name="body" rows="4" placeholder="Leave a review"></textarea>
-    <div class="actions">
-      <button type="submit" name="verdict" value="approve">Approve</button>
-      <button type="submit" name="verdict" value="request_changes" class="secondary">Request changes</button>
-      <button type="submit" name="verdict" value="comment" class="secondary">Comment</button>
+    <div class="merge-box{% if conflicted %} blocked{% endif %}">
+      <svg width="20" height="20" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M128 24l80 32v56c0 52-34 92-80 120-46-28-80-68-80-120V56Z"/><path d="M96 128l24 24 44-48"/></svg>
+      <div class="say">
+        {% if merged %}
+          <span class="headline">Merged as <code class="oid">{{ merge_commit }}</code>{% match merged_by %}{% when Some with (m) %} by {{ m }}{% when None %}{% endmatch %}</span>
+          <span class="detail"><code>{{ source_branch }}</code> landed on <code>{{ target_branch }}</code>.</span>
+        {% else if !open %}
+          <span class="headline">This pull request is closed.</span>
+          <span class="detail">Nothing was merged.</span>
+        {% else if conflicted %}
+          <span class="headline">These branches have conflicts that must be resolved.</span>
+          <span class="detail">The forge will not merge a tree it had to guess at.</span>
+        {% else if mergeable %}
+          <span class="headline">These branches can be merged.</span>
+          <span class="detail">
+            Merging moves <code>{{ target_branch }}</code> through a compare-and-swap on <code>{{ head_short }}</code> — if the branch moves first, the merge is refused.
+            {% if !checks_passed && !checks.is_empty() %} Checks have not all passed yet.{% endif %}
+          </span>
+        {% else %}
+          <span class="headline">Checking whether these branches can be merged&hellip;</span>
+          <span class="detail">The trial merge runs against the commits this request points at.</span>
+        {% endif %}
+      </div>
+      {% if open && mergeable && can_write %}
+        <form method="post" action="/{{ owner }}/{{ repo }}/pulls/{{ number }}/merge">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="expected_head" value="{{ head_oid }}">
+          <button type="submit" class="btn btn-primary">Merge pull request</button>
+        </form>
+      {% endif %}
     </div>
-  </form>
-{% endif %}
 
-<h3>Changes</h3>
-<pre class="diff"><code>{{ diff }}</code></pre>
+    {% for r in reviews %}
+      <article class="comment">
+        <header>
+          <span class="monogram monogram-sm monogram-neutral">{{ r.initials }}</span>
+          <span class="who">{{ r.reviewer }}</span>
+          <span class="tag {{ r.verdict_class }}">{{ r.verdict_label }}</span>
+        </header>
+        {% match r.body %}{% when Some with (b) %}<div class="markdown">{{ b }}</div>{% when None %}{% endmatch %}
+      </article>
+    {% endfor %}
+
+    {% if can_write && open %}
+      <form method="post" action="/{{ owner }}/{{ repo }}/pulls/{{ number }}/reviews" class="composer">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <textarea name="body" rows="4" placeholder="Leave a review"></textarea>
+        <div class="actions">
+          <button type="submit" name="verdict" value="approve" class="btn btn-primary">Approve</button>
+          <button type="submit" name="verdict" value="request_changes" class="btn btn-secondary">Request changes</button>
+          <button type="submit" name="verdict" value="comment" class="btn btn-secondary">Comment</button>
+        </div>
+      </form>
+    {% endif %}
+
+    <h2>Changes</h2>
+    <pre class="diff"><code>{{ diff }}</code></pre>
+  </div>
+
+  <div class="rail">
+    {% if !checks.is_empty() %}
+      <div class="card elev-sm">
+        <span class="card-kicker">Checks</span>
+        <ul class="check-list">
+          {% for c in checks %}
+            <li class="check {{ c.status_class }}">
+              <div class="check-line">
+                <span class="glyph" aria-hidden="true">{{ c.glyph }}</span>
+                <span class="name">{{ c.name }} #{{ c.number }}</span>
+                <span class="state">{{ c.status }}</span>
+              </div>
+              {% if !c.jobs.is_empty() %}
+                <ul class="check-jobs">
+                  {% for j in c.jobs %}
+                    <li class="check-job {{ j.status_class }}">
+                      <span class="glyph" aria-hidden="true">{{ j.glyph }}</span>
+                      <span class="name">{{ j.name }}</span>
+                      <span class="state">{{ j.status }}</span>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+        {% if !checks_passed %}<p class="checks-note">Some checks have not passed yet.</p>{% endif %}
+      </div>
+    {% endif %}
+
+    {% if !reviews.is_empty() %}
+      <div class="card elev-sm">
+        <span class="card-kicker">Reviewers</span>
+        <div class="reviewers">
+          {% for r in reviews %}
+            <div>
+              <span class="monogram monogram-sm monogram-neutral">{{ r.initials }}</span>
+              <span class="who">{{ r.reviewer }}</span>
+              <span class="tag {{ r.verdict_class }}">{{ r.verdict_label }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="card elev-sm">
+      <span class="card-kicker">This change</span>
+      <div class="card-rows">
+        <div><span class="k">From</span><span class="v mono">{{ source_branch }}</span></div>
+        <div><span class="k">Into</span><span class="v mono">{{ target_branch }}</span></div>
+        <div><span class="k">Head</span><span class="v mono">{{ head_short }}</span></div>
+        <div><span class="k">Commits</span><span class="v">{{ commit_count }}</span></div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

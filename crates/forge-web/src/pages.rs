@@ -27,7 +27,10 @@ pub struct Chrome {
 pub struct EntryView {
     pub name: String,
     pub url: String,
+    /// The mark in the first column.
     pub icon: &'static str,
+    /// What that mark means, for a reader who is not looking at it.
+    pub kind: &'static str,
     pub size: String,
 }
 
@@ -42,6 +45,7 @@ pub struct ReadmeView {
 pub struct TreePage {
     pub viewer: MaybeViewer,
     pub csrf: String,
+    pub tab: &'static str,
     pub owner: String,
     pub repo: String,
     pub description: Option<String>,
@@ -54,6 +58,10 @@ pub struct TreePage {
     pub clone_url: String,
     pub empty: bool,
     pub entries: Vec<EntryView>,
+    /// The tip of the revision being browsed. Absent on an empty repository,
+    /// and only ever the one commit: a per-file "last changed" column is a
+    /// `git log` for every row, which is not worth the wait on a listing.
+    pub latest: Option<CommitView>,
     pub readme: Option<ReadmeView>,
 }
 
@@ -62,6 +70,7 @@ pub struct TreePage {
 pub struct BlobPage {
     pub viewer: MaybeViewer,
     pub csrf: String,
+    pub tab: &'static str,
     pub owner: String,
     pub repo: String,
     pub description: Option<String>,
@@ -82,6 +91,7 @@ pub struct CommitView {
     pub short: String,
     pub summary: String,
     pub author: String,
+    pub initials: String,
     pub when: String,
 }
 
@@ -90,6 +100,7 @@ pub struct CommitView {
 pub struct CommitsPage {
     pub viewer: MaybeViewer,
     pub csrf: String,
+    pub tab: &'static str,
     pub owner: String,
     pub repo: String,
     pub description: Option<String>,
@@ -105,6 +116,7 @@ pub struct CommitsPage {
 pub struct CommitPage {
     pub viewer: MaybeViewer,
     pub csrf: String,
+    pub tab: &'static str,
     pub owner: String,
     pub repo: String,
     pub description: Option<String>,
@@ -115,6 +127,7 @@ pub struct CommitPage {
     pub summary: String,
     pub body: Option<String>,
     pub author: String,
+    pub initials: String,
     pub when: String,
     /// The raw unified diff. Escaped by askama, deliberately: it is git's
     /// output, not markup.
@@ -134,6 +147,7 @@ pub struct IssueRow {
 pub struct IssuesPage {
     pub viewer: MaybeViewer,
     pub csrf: String,
+    pub tab: &'static str,
     pub owner: String,
     pub repo: String,
     pub description: Option<String>,
@@ -149,6 +163,7 @@ pub struct IssuesPage {
 /// One comment in a conversation.
 pub struct CommentView {
     pub author: String,
+    pub initials: String,
     pub body: Safe<String>,
 }
 
@@ -157,6 +172,7 @@ pub struct CommentView {
 pub struct IssuePage {
     pub viewer: MaybeViewer,
     pub csrf: String,
+    pub tab: &'static str,
     pub owner: String,
     pub repo: String,
     pub description: Option<String>,
@@ -167,8 +183,12 @@ pub struct IssuePage {
     pub title: String,
     pub open: bool,
     pub author: String,
+    pub author_initials: String,
     pub body: Safe<String>,
     pub comments: Vec<CommentView>,
+    /// Every comment on the issue, which is not the same number as the length
+    /// of `comments`: that one is capped at a page.
+    pub comment_count: i64,
     pub can_write: bool,
 }
 
@@ -177,6 +197,7 @@ pub struct IssuePage {
 pub struct NewIssuePage {
     pub viewer: MaybeViewer,
     pub csrf: String,
+    pub tab: &'static str,
     pub owner: String,
     pub repo: String,
     pub description: Option<String>,
@@ -200,6 +221,7 @@ pub struct PullRow {
 pub struct PullsPage {
     pub viewer: MaybeViewer,
     pub csrf: String,
+    pub tab: &'static str,
     pub owner: String,
     pub repo: String,
     pub description: Option<String>,
@@ -215,6 +237,7 @@ pub struct PullsPage {
 /// One review on a pull request.
 pub struct ReviewView {
     pub reviewer: String,
+    pub initials: String,
     pub verdict_label: String,
     pub verdict_class: String,
     pub body: Option<Safe<String>>,
@@ -225,6 +248,7 @@ pub struct ReviewView {
 pub struct PullDetailPage {
     pub viewer: MaybeViewer,
     pub csrf: String,
+    pub tab: &'static str,
     pub owner: String,
     pub repo: String,
     pub description: Option<String>,
@@ -241,10 +265,14 @@ pub struct PullDetailPage {
     pub conflicted: bool,
     pub conflicts: Vec<String>,
     pub author: String,
+    pub author_initials: String,
     pub body: Option<Safe<String>>,
     pub source_branch: String,
     pub target_branch: String,
     pub head_oid: String,
+    /// The head commit, abbreviated. The full one still goes in the merge
+    /// form's hidden field — the short one is only ever for reading.
+    pub head_short: String,
     pub merge_commit: String,
     pub merged_by: Option<String>,
     pub commit_count: i64,
@@ -265,6 +293,9 @@ pub struct CheckView {
     pub status: String,
     /// A CSS class, so the template does not branch on status text.
     pub status_class: String,
+    /// A mark beside the status word. The palette is mono, so the glyph is the
+    /// second channel and the word is the first — neither is a colour.
+    pub glyph: &'static str,
     pub number: i64,
     pub jobs: Vec<CheckJobView>,
 }
@@ -274,6 +305,7 @@ pub struct CheckJobView {
     pub name: String,
     pub status: String,
     pub status_class: String,
+    pub glyph: &'static str,
 }
 
 /// One repository on a profile.
@@ -288,6 +320,7 @@ pub struct ProfilePage {
     pub viewer: MaybeViewer,
     pub csrf: String,
     pub username: String,
+    pub initials: String,
     pub repos: Vec<RepoRow>,
 }
 
@@ -316,19 +349,64 @@ pub struct ErrorPage {
     pub message: String,
 }
 
+/// A one- or two-letter monogram for a name.
+///
+/// The forge stores no avatars, and it is not going to fetch one from a
+/// third party to draw its own chrome, so an identity is a letterform. Two
+/// letters from two words where there are two, otherwise the first two of the
+/// one word — which is what a reader recognises at 22 pixels.
+pub fn initials(name: &str) -> String {
+    let words: Vec<&str> = name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    let letters: String = match words.as_slice() {
+        [] => return "?".to_string(),
+        [one] => one.chars().take(2).collect(),
+        [first, second, ..] => first
+            .chars()
+            .take(1)
+            .chain(second.chars().take(1))
+            .collect(),
+    };
+    letters.to_lowercase()
+}
+
+/// Abbreviate an object id for reading. The full one still travels in forms.
+pub fn short_oid(oid: &str) -> String {
+    oid.chars().take(7).collect()
+}
+
 /// Render a byte count for a listing.
 pub fn human_size(bytes: Option<u64>) -> String {
     bytes.map_or_else(String::new, |b| forge_types::ByteSize::bytes(b).human())
 }
 
-/// The icon for a tree entry.
+/// The mark drawn beside a tree entry.
+///
+/// A glyph rather than a word, because the column sits in front of every row of
+/// every listing and three letters of "dir" is three letters of noise. The word
+/// is still in the markup — see [`kind_for`] — just not in the ink.
 pub fn icon_for(kind: forge_git::EntryKind) -> &'static str {
     use forge_git::EntryKind;
     match kind {
-        EntryKind::Directory => "dir",
-        EntryKind::Symlink => "link",
-        EntryKind::Submodule => "sub",
-        EntryKind::Executable => "exe",
+        EntryKind::Directory => "▸",
+        EntryKind::Symlink => "↳",
+        EntryKind::Submodule => "◈",
+        EntryKind::Executable => "▹",
+        EntryKind::File => "·",
+    }
+}
+
+/// What a tree entry is, spelled out for a screen reader.
+pub fn kind_for(kind: forge_git::EntryKind) -> &'static str {
+    use forge_git::EntryKind;
+    match kind {
+        EntryKind::Directory => "directory",
+        EntryKind::Symlink => "symlink",
+        EntryKind::Submodule => "submodule",
+        EntryKind::Executable => "executable file",
         EntryKind::File => "file",
     }
 }
@@ -391,6 +469,25 @@ mod tests {
         // Past a week, an absolute date is more use than "412 days ago".
         let old = relative_time(now - 86_400 * 400);
         check!(old.contains("20"), "expected a year in {old}");
+    }
+
+    #[test]
+    fn a_monogram_is_two_letters_however_the_name_is_spelled() {
+        check!(initials("octocat") == "oc");
+        check!(initials("Mira Vance") == "mv");
+        check!(initials("refactor-agent") == "ra");
+        check!(initials("j") == "j");
+        // Names are user-supplied, so none of these may panic or leak markup.
+        check!(initials("") == "?");
+        check!(initials("<script>") == "sc");
+        check!(initials("  ") == "?");
+    }
+
+    #[test]
+    fn a_short_oid_is_seven_characters_and_never_panics_on_a_short_one() {
+        check!(short_oid("4d02b9f0c1e4aa") == "4d02b9f");
+        check!(short_oid("abc") == "abc");
+        check!(short_oid("").is_empty());
     }
 
     #[test]
