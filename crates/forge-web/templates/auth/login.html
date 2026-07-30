@@ -5,9 +5,11 @@
   <h1>Sign in</h1>
   {% match error %}{% when Some with (e) %}<p class="error">{{ e }}</p>{% when None %}{% endmatch %}
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <input type="text" name="username" placeholder="Username" required autofocus autocomplete="username">
-  <input type="password" name="password" placeholder="Password" required autocomplete="current-password">
-  <button type="submit">Sign in</button>
+  <div class="field"><label for="username">Username</label>
+    <input class="input" id="username" type="text" name="username" required autofocus autocomplete="username"></div>
+  <div class="field"><label for="password">Password</label>
+    <input class="input" id="password" type="password" name="password" required autocomplete="current-password"></div>
+  <button type="submit" class="btn btn-primary btn-block">Sign in</button>
   <p>No account? <a href="/register">Register</a>.</p>
 </form>
 {% endblock %}

@@ -78,6 +78,7 @@ pub async fn list(
         csrf: session::csrf_token(&state, viewer.as_ref()),
         can_write: viewer.is_some(),
         viewer,
+        tab: "issues",
         owner: record.owner_name.clone(),
         repo: record.name.clone(),
         description: record.description.clone(),
@@ -107,6 +108,7 @@ pub async fn new_form(
     Ok(NewIssuePage {
         csrf: session::csrf_token(&state, viewer.as_ref()),
         viewer,
+        tab: "issues",
         owner: record.owner_name.clone(),
         repo: record.name.clone(),
         description: record.description.clone(),
@@ -202,6 +204,7 @@ pub async fn detail(
         .await?
         .into_iter()
         .map(|c| CommentView {
+            initials: crate::pages::initials(&c.author_name),
             author: c.author_name,
             body: askama::filters::Safe(forge_render::render_markdown(&c.body, &markdown)),
         })
@@ -212,6 +215,7 @@ pub async fn detail(
         csrf: session::csrf_token(&state, viewer.as_ref()),
         can_write: viewer.is_some(),
         viewer,
+        tab: "issues",
         owner: record.owner_name.clone(),
         repo: record.name.clone(),
         description: record.description.clone(),
@@ -221,6 +225,7 @@ pub async fn detail(
         number: issue.number,
         open: issue.is_open(),
         title: issue.title,
+        author_initials: crate::pages::initials(&issue.author_name),
         author: issue.author_name,
         body: askama::filters::Safe(forge_render::render_markdown(
             issue.body.as_deref().unwrap_or_default(),

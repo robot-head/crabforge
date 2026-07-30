@@ -1,124 +1,614 @@
-/* Deliberately plain. A forge is read far more than it is admired, so this
-   optimises for legibility and for pages that render before a stylesheet
-   finishes loading. */
+/* Nocturne, as the forge wears it.
+ *
+ * The token block and the component layer below it are the Nocturne design
+ * system: a dark, dense, low-chroma interface with one blurple accent used as a
+ * line and a glow rather than a flood, rules that fade to transparent at their
+ * ends, and outlined primary actions. Tokens are copied verbatim from the
+ * system's stylesheet so that retuning the system is a matter of replacing the
+ * block, not hunting hexes.
+ *
+ * Two deliberate departures, both forced by what a forge is:
+ *
+ *   - Inter is named but never fetched. The system's own sheet imports it from
+ *     Google Fonts; a forge that keeps nothing outside the log has no business
+ *     making a third-party request to render its own chrome, so Inter is used
+ *     when the reader has it and the system stack carries the page when they do
+ *     not. The type is metric-close enough that the density survives.
+ *
+ *   - Nocturne is a mono palette with no status role, and a forge has to be able
+ *     to say "this build failed" without relying on a word alone. `--status-bad`
+ *     and `--status-warn` are the two additions, kept at the ramps' lightness and
+ *     low chroma, and used only as thin marks — a left border, a glyph — never
+ *     as a fill. Every status also carries its own label, so none of the meaning
+ *     lives in the colour.
+ */
+
 :root {
-  --fg: #1f2328; --muted: #59636e; --bg: #ffffff; --surface: #f6f8fa;
-  --border: #d1d9e0; --accent: #0969da; --open: #1a7f37; --closed: #cf222e;
+  --color-bg: #161826;
+  --color-surface: #232532;
+  --color-text: #e9e9ed;
+  --color-accent: #9184d9;
+  --color-divider: color-mix(in srgb, #e9e9ed 16%, transparent);
+
+  /* Tonal ramps — one shared OKLCH lightness scale, so the same step of any
+     role carries the same visual weight. */
+  --color-neutral-100: #f3f5fe;
+  --color-neutral-200: #e4e7f5;
+  --color-neutral-300: #cfd3e5;
+  --color-neutral-400: #b2b6ca;
+  --color-neutral-500: #9397ab;
+  --color-neutral-600: #75798c;
+  --color-neutral-700: #595d6c;
+  --color-neutral-800: #3f424d;
+  --color-neutral-900: #292b31;
+
+  --color-accent-100: #f5f4ff;
+  --color-accent-200: #e7e5fe;
+  --color-accent-300: #d2cefd;
+  --color-accent-400: #b5abfc;
+  --color-accent-500: #968ae0;
+  --color-accent-600: #796cbf;
+  --color-accent-700: #5d5294;
+  --color-accent-800: #423a6a;
+  --color-accent-900: #2b2741;
+
+  /* The forge's two additions. Same lightness band as the accent, chroma kept
+     near it, so they read as marks in the same family rather than as alarms
+     from another palette. */
+  --status-bad: #d98d95;
+  --status-bad-dim: #4f3339;
+  --status-warn: #cba97c;
+  --status-warn-dim: #453a2b;
+
+  --font-heading: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-heading-weight: 500;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --space-1: 2.8px;
+  --space-2: 5.6px;
+  --space-3: 8.4px;
+  --space-4: 11.2px;
+  --space-6: 16.8px;
+  --space-8: 22.4px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+
+  /* On a dark ground, elevation is a hairline edge plus ambient darkness. */
+  --shadow-sm: 0 0 0 1px #3f424d;
+  --shadow-md: 0 0 0 1px #595d6c, 0 6px 18px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 0 0 1px #9397ab, 0 16px 40px rgba(0, 0, 0, 0.65);
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --fg: #e6edf3; --muted: #9198a1; --bg: #0d1117; --surface: #151b23;
-    --border: #3d444d; --accent: #4493f8; --open: #3fb950; --closed: #f85149;
-  }
-}
-* { box-sizing: border-box; }
+
+/* ── base ─────────────────────────────────────────────────────────────────── */
+
+*, *::before, *::after { box-sizing: border-box; }
+
 body {
-  margin: 0; color: var(--fg); background: var(--bg);
-  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.55;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
 }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+  margin: 0 0 var(--space-2);
+}
+h1 { font-size: 30px; }
+h2 { font-size: 25px; }
+h3 { font-size: 20px; }
+h4 { font-size: 17px; }
+h5 { font-size: 15px; }
+h6 { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-neutral-500); }
+
+p { margin: 0 0 var(--space-3); }
+a { color: var(--color-accent); text-decoration: none; text-underline-offset: 3px; }
+a:hover { color: var(--color-accent-300); text-decoration: underline; }
+img { display: block; max-width: 100%; }
+code, pre { font-family: var(--font-mono); font-size: 12px; }
+
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+
+.muted { color: var(--color-neutral-500); }
+.mono { font-family: var(--font-mono); }
+
+/* Text that carries meaning a glyph is standing in for. Present in the
+   accessibility tree, absent from the page. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+
+/* Rules fade to transparent over 48px at each end — the system's signature.
+   Box outlines and short accent marks stay solid. */
+.hr {
+  height: 1px; border: 0; margin: var(--space-4) 0;
+  background: linear-gradient(to right,
+    transparent, var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px), transparent);
+}
+
+/* ── buttons ──────────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer; text-decoration: none; white-space: nowrap;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 13px; line-height: 1.2; color: var(--color-text);
+  background: transparent; border: 1px solid transparent;
+  padding: var(--space-2) calc(var(--space-3) * 1.2);
+  border-radius: var(--radius-md);
+}
+.btn svg { display: block; flex: none; }
+.btn:hover { text-decoration: none; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+
+/* The primary action is an accent outline. Never a fill — Nocturne carries the
+   accent in lines and marks. */
+.btn-primary { color: var(--color-accent); border-color: var(--color-accent); }
+.btn-primary:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent-300); }
+.btn-primary:active { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
+.btn-secondary { border-color: var(--color-divider); }
+.btn-secondary:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); color: var(--color-text); }
+.btn-secondary:active { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+.btn-ghost { color: var(--color-accent); padding-inline: var(--space-1); }
+.btn-ghost:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.btn-ghost:active { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.btn-icon { width: 32px; height: 32px; padding: 0; }
+.btn-block { width: 100%; }
+
+/* A submit button that has to read as a link — signing out lives in a form,
+   because signing out is a write. */
+.linkish {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--color-neutral-400);
+}
+.linkish:hover { color: var(--color-accent-300); }
+
+/* ── tags ─────────────────────────────────────────────────────────────────── */
+
+.tag {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  font-size: 11px; letter-spacing: 0.02em; padding: 2px 9px;
+  border-radius: calc(var(--radius-md) * 0.75);
+  border: 1px solid transparent;
+}
+.tag-accent { background: var(--color-accent-800); color: var(--color-accent-100); }
+.tag-neutral { background: var(--color-neutral-800); color: var(--color-neutral-100); }
+.tag-outline { border-color: var(--color-accent); color: var(--color-accent); }
+.tag-bad { border-color: var(--status-bad); color: var(--status-bad); }
+
+/* Pull-request and issue states. Mono, so the word carries the meaning and the
+   tint only ranks it. */
+.tag.open { border-color: var(--color-accent); color: var(--color-accent); }
+.tag.closed { background: var(--color-neutral-800); color: var(--color-neutral-200); }
+.tag.merged { background: var(--color-accent-800); color: var(--color-accent-100); }
+.tag.approve { background: var(--color-accent-800); color: var(--color-accent-100); }
+.tag.request_changes { border-color: var(--status-bad); color: var(--status-bad); }
+.tag.comment { background: var(--color-neutral-800); color: var(--color-neutral-200); }
+
+.count {
+  font-size: 11px; background: var(--color-neutral-900); color: var(--color-neutral-300);
+  border-radius: 999px; padding: 1px 7px; margin-left: 2px;
+}
+
+/* ── cards ────────────────────────────────────────────────────────────────── */
+
+.card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-4); border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.card-kicker { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-accent); }
+.card-body { margin: 0; font-size: 12.5px; color: var(--color-neutral-400); }
+.card-meta {
+  display: flex; align-items: center; gap: 6px; font-size: 11px;
+  color: var(--color-neutral-500);
+}
+.card-rows { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.card-rows > div { display: flex; align-items: baseline; gap: 8px; }
+.card-rows dt, .card-rows .k { color: var(--color-neutral-500); }
+.card-rows dd, .card-rows .v { margin: 0; margin-left: auto; color: var(--color-neutral-200); text-align: right; }
+.elev-sm { box-shadow: var(--shadow-sm); }
+.elev-md { box-shadow: var(--shadow-md); }
+
+/* ── forms ────────────────────────────────────────────────────────────────── */
+
+.field > label {
+  display: block; font-size: 12px; margin-bottom: 5px;
+  color: var(--color-neutral-400);
+}
+
+.input, input[type="text"], input[type="email"], input[type="password"], textarea {
+  width: 100%; min-height: 34px; padding: 6px 10px;
+  font: inherit; font-size: 13px; font-family: var(--font-body);
+  color: var(--color-text); caret-color: var(--color-accent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+input::placeholder, textarea::placeholder { color: var(--color-neutral-600); }
+.input:hover, input:hover, textarea:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.input:focus-visible, input:focus-visible, textarea:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
+textarea { min-height: 90px; resize: vertical; line-height: 1.55; }
+
+.actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+
+/* ── tables ───────────────────────────────────────────────────────────────── */
+
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th {
+  text-align: left; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--color-neutral-500); font-weight: var(--font-heading-weight);
+  padding: var(--space-2) var(--space-3);
+}
+.table td { padding: var(--space-3); vertical-align: top; }
+/* Row rules are painted by the row, not the cell, so the end-fade spans the
+   whole row the way a freestanding rule does. */
+.table thead tr {
+  background: linear-gradient(to right,
+    transparent, var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+.table tbody tr {
+  background: linear-gradient(to right,
+    transparent, color-mix(in srgb, var(--color-text) 8%, transparent) 48px,
+    color-mix(in srgb, var(--color-text) 8%, transparent) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+.table tbody tr:hover {
+  background:
+    linear-gradient(color-mix(in srgb, var(--color-text) 4%, transparent),
+                    color-mix(in srgb, var(--color-text) 4%, transparent)) no-repeat 0 0 / 100% 100%,
+    linear-gradient(to right,
+      transparent, color-mix(in srgb, var(--color-text) 8%, transparent) 48px,
+      color-mix(in srgb, var(--color-text) 8%, transparent) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+
+/* ══ the forge ════════════════════════════════════════════════════════════ */
+
+/* ── chrome ───────────────────────────────────────────────────────────────── */
 
 .topbar {
-  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-  padding: .75rem 1.5rem; border-bottom: 1px solid var(--border); background: var(--surface);
+  display: flex; align-items: center; gap: var(--space-8);
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--color-divider);
 }
-.brand { font-weight: 600; font-size: 1.1rem; }
-.topbar nav { display: flex; align-items: center; gap: 1rem; }
-.inline { display: inline; }
-.linkish { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
-
-main { max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
-footer { max-width: 60rem; margin: 0 auto; padding: 2rem 1.5rem; color: var(--muted); font-size: 12px; }
-
-.repo-header h1 { font-size: 1.25rem; font-weight: 400; margin: 0 0 .25rem; }
-.description { color: var(--muted); margin: .25rem 0 1rem; }
-.tabs { display: flex; gap: 1.25rem; border-bottom: 1px solid var(--border); padding-bottom: .5rem; margin-bottom: 1rem; }
-.badge { background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 0 .5rem; font-size: 11px; }
-.chip { border: 1px solid var(--border); border-radius: 999px; padding: .1rem .5rem; font-size: 11px; }
-.chip.open { background: var(--open); color: #fff; border-color: transparent; }
-.chip.closed { background: var(--closed); color: #fff; border-color: transparent; }
-
-.toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: .75rem; color: var(--muted); }
-.toolbar .active { font-weight: 600; color: var(--fg); }
-.revision { border: 1px solid var(--border); border-radius: 6px; padding: .1rem .5rem; }
-.clone { margin-left: auto; font-family: ui-monospace, monospace; font-size: 12px; }
-
-table.tree { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 6px; }
-table.tree td { padding: .4rem .75rem; border-top: 1px solid var(--border); }
-table.tree tr:first-child td { border-top: 0; }
-.kind { color: var(--muted); width: 3rem; font-size: 11px; }
-.size { text-align: right; color: var(--muted); width: 6rem; }
-
-.readme { border: 1px solid var(--border); border-radius: 6px; margin-top: 1.5rem; padding: 1.5rem; }
-.readme h2 { margin-top: 0; font-size: .9rem; color: var(--muted); }
-.markdown img { max-width: 100%; }
-.markdown pre { background: var(--surface); padding: 1rem; overflow-x: auto; border-radius: 6px; }
-.markdown table { border-collapse: collapse; }
-.markdown td, .markdown th { border: 1px solid var(--border); padding: .3rem .6rem; }
-
-.blob pre, .diff { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; overflow-x: auto; }
-.blob pre { margin: 0; }
-
-ul.commits, ul.issues, ul.repos { list-style: none; padding: 0; border: 1px solid var(--border); border-radius: 6px; }
-ul.commits li, ul.issues li, ul.repos li { padding: .6rem 1rem; border-top: 1px solid var(--border); }
-ul.commits li:first-child, ul.issues li:first-child, ul.repos li:first-child { border-top: 0; }
-.summary, .title { font-weight: 600; }
-.meta { color: var(--muted); font-size: 12px; display: block; }
-.oid { color: var(--muted); }
-.empty { color: var(--muted); padding: 1.5rem; text-align: center; }
-
-.comment { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 1rem; }
-.comment header { background: var(--surface); padding: .5rem 1rem; border-bottom: 1px solid var(--border); font-weight: 600; }
-.comment .markdown { padding: 1rem; }
-
-form.composer, form.auth { display: flex; flex-direction: column; gap: .75rem; }
-form.auth { max-width: 22rem; margin: 3rem auto; }
-input, textarea, button {
-  font: inherit; padding: .5rem .75rem; border: 1px solid var(--border);
-  border-radius: 6px; background: var(--bg); color: var(--fg);
+.brand {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 16px; color: var(--color-text);
 }
-button { background: var(--accent); color: #fff; border-color: transparent; cursor: pointer; }
-button.secondary { background: var(--surface); color: var(--fg); border-color: var(--border); }
-.actions { display: flex; gap: .5rem; }
-.button { background: var(--accent); color: #fff; padding: .35rem .75rem; border-radius: 6px; }
-.button:hover { text-decoration: none; }
-.error { color: var(--closed); }
-.error-page { text-align: center; padding: 4rem 0; }
-.error-page h1 { font-size: 3rem; margin: 0; color: var(--muted); }
-.number { color: var(--muted); font-weight: 400; }
+.brand:hover { color: var(--color-text); text-decoration: none; }
+.brand svg { color: var(--color-accent); }
+.topbar nav { margin-left: auto; display: flex; align-items: center; gap: var(--space-6); }
+/* `:not(.btn)` so a button that happens to live in the nav keeps being one. */
+.topbar nav a:not(.btn) { font-size: 13px; color: var(--color-neutral-400); }
+.topbar nav a:not(.btn):hover { color: var(--color-accent-300); text-decoration: none; }
+.monogram:hover { text-decoration: none; }
+.inline { display: inline-flex; }
 
-.merge-box { border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin: 1rem 0; }
-.merge-box pre { background: var(--surface); padding: .75rem; border-radius: 6px; overflow-x: auto; }
-.chip.merged { background: #8250df; color: #fff; border-color: transparent; }
-.chip.approve { background: var(--open); color: #fff; border-color: transparent; }
-.chip.request_changes { background: var(--closed); color: #fff; border-color: transparent; }
-ul.conflicts { margin: .5rem 0; }
-.muted { color: var(--muted); }
+/* The monogram stands in for an avatar. The forge stores no images, and a
+   letterform is legible at 26px in a way a generated blob is not. */
+.monogram {
+  width: 26px; height: 26px; border-radius: 50%; flex: none;
+  display: inline-grid; place-items: center; vertical-align: middle;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
+  background: var(--color-accent-800); color: var(--color-accent-200);
+  text-transform: lowercase;
+}
+.monogram-sm { width: 22px; height: 22px; font-size: 9.5px; }
+.monogram-neutral { background: var(--color-neutral-800); color: var(--color-neutral-200); }
 
-/* ── Crab Actions checks on a pull request ────────────────────────────────── */
+main { max-width: 1400px; margin: 0 auto; padding: 20px 24px 48px; }
+footer {
+  max-width: 1400px; margin: 0 auto; padding: 0 24px 32px;
+  color: var(--color-neutral-600); font-size: 11.5px;
+}
 
-.checks { margin: 1.5rem 0; }
+/* The two-column page: content that can grow, and a rail that cannot. */
+.split { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--space-8); align-items: start; }
+.rail { display: flex; flex-direction: column; gap: var(--space-4); }
+.stack { display: flex; flex-direction: column; gap: var(--space-6); min-width: 0; }
+
+@media (max-width: 1000px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .rail { flex-direction: row; flex-wrap: wrap; }
+  .rail > * { flex: 1 1 260px; }
+}
+@media (max-width: 640px) {
+  main { padding: 16px 14px 40px; }
+  .topbar { gap: var(--space-4); padding: 10px 14px; }
+  .rail { flex-direction: column; }
+}
+
+/* ── repository header ────────────────────────────────────────────────────── */
+
+.repo-header { display: flex; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-6); }
+.repo-title { display: flex; align-items: flex-start; gap: var(--space-4); flex-wrap: wrap; }
+.repo-title h1 { font-size: 20px; margin: 0; font-weight: 400; }
+.repo-title h1 a { color: var(--color-text); }
+.repo-title h1 a:last-of-type { color: var(--color-text); font-weight: var(--font-heading-weight); }
+.repo-title h1 .sep { color: var(--color-neutral-600); }
+.repo-title .actions { margin-left: auto; }
+.repo-facts { display: flex; gap: var(--space-6); flex-wrap: wrap; font-size: 12px; color: var(--color-neutral-500); }
+.repo-facts .proven { color: var(--color-accent-300); display: inline-flex; align-items: center; gap: 5px; }
+.description { color: var(--color-neutral-400); font-size: 13px; margin: 0; }
+
+.tabs {
+  display: flex; gap: var(--space-8); font-size: 13px;
+  border-bottom: 1px solid var(--color-divider); padding-bottom: var(--space-3);
+}
+.tabs a { color: var(--color-neutral-400); }
+.tabs a:hover { color: var(--color-accent-300); text-decoration: none; }
+.tabs a[aria-current="page"] { color: var(--color-accent); }
+
+/* ── toolbars ─────────────────────────────────────────────────────────────── */
+
+.toolbar {
+  display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
+  font-size: 12px; color: var(--color-neutral-500);
+}
+.toolbar .spacer { margin-left: auto; }
+.toolbar a { color: var(--color-neutral-400); }
+.toolbar a:hover { color: var(--color-accent-300); }
+.toolbar a.active { color: var(--color-accent); }
+.revision {
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+  padding: 3px 10px; color: var(--color-neutral-300); flex: none;
+}
+.breadcrumb { color: var(--color-neutral-400); font-family: var(--font-mono); }
+.breadcrumb a { color: var(--color-neutral-400); }
+
+/* The line above a tree: who last touched this revision, and when. */
+.last-commit { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--color-neutral-500); }
+.last-commit .who { color: var(--color-neutral-300); }
+.last-commit .summary { color: var(--color-neutral-300); }
+.last-commit code { color: var(--color-neutral-500); }
+
+/* ── the tree ─────────────────────────────────────────────────────────────── */
+
+.tree td:first-child { width: 26px; color: var(--color-neutral-600); text-align: center; }
+.tree td.size { text-align: right; color: var(--color-neutral-600); width: 90px; font-variant-numeric: tabular-nums; }
+.tree a { color: var(--color-neutral-200); }
+.tree a:hover { color: var(--color-accent-300); }
+
+.panel {
+  background: var(--color-surface); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm); overflow: hidden;
+}
+.panel-head {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
+  font-size: 12px; color: var(--color-neutral-400);
+}
+.panel-head h2, .panel-head h3 { margin: 0; font-size: 13px; color: var(--color-neutral-300); }
+.panel-body { padding: var(--space-6); }
+
+.readme { margin-top: var(--space-6); }
+
+.clone-url {
+  display: block; font-family: var(--font-mono); font-size: 11.5px;
+  background: var(--color-bg); border-radius: var(--radius-sm);
+  padding: 7px 10px; color: var(--color-neutral-300);
+  overflow-x: auto; white-space: nowrap;
+}
+
+/* ── code ─────────────────────────────────────────────────────────────────── */
+
+.blob pre, pre.diff, .empty pre {
+  margin: 0; background: var(--color-surface); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm); padding: var(--space-6);
+  overflow-x: auto; font-size: 12px; line-height: 1.6;
+  color: var(--color-neutral-200);
+}
+pre.diff { color: var(--color-neutral-400); }
+pre.commit-body {
+  margin: 0; padding: 0; background: none; box-shadow: none;
+  font-family: var(--font-body); font-size: 13px; color: var(--color-neutral-400);
+  white-space: pre-wrap;
+}
+
+.oid, code.oid { font-family: var(--font-mono); color: var(--color-neutral-500); }
+
+/* ── markdown ─────────────────────────────────────────────────────────────── */
+
+.markdown { font-size: 14px; color: var(--color-neutral-300); }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 {
+  color: var(--color-text); margin: var(--space-8) 0 var(--space-3);
+}
+.markdown h1, .markdown h2 { padding-bottom: var(--space-2); border-bottom: 1px solid var(--color-divider); }
+.markdown p, .markdown ul, .markdown ol, .markdown blockquote { margin: 0 0 var(--space-4); }
+.markdown ul, .markdown ol { padding-left: var(--space-8); }
+.markdown li { margin-bottom: var(--space-1); }
+.markdown code {
+  background: var(--color-neutral-900); border-radius: var(--radius-sm);
+  padding: 1px 5px; color: var(--color-neutral-200);
+}
+.markdown pre {
+  background: var(--color-bg); box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-md); padding: var(--space-6);
+  overflow-x: auto; margin: 0 0 var(--space-4);
+}
+.markdown pre code { background: none; padding: 0; }
+.markdown blockquote {
+  border-left: 2px solid var(--color-accent-700); padding-left: var(--space-4);
+  color: var(--color-neutral-500);
+}
+.markdown table { border-collapse: collapse; margin: 0 0 var(--space-4); font-size: 13px; }
+.markdown th, .markdown td { border: 1px solid var(--color-divider); padding: var(--space-2) var(--space-4); }
+.markdown th { color: var(--color-neutral-300); text-align: left; }
+.markdown hr { border: 0; height: 1px; background: var(--color-divider); margin: var(--space-8) 0; }
+
+/* ── lists of things ──────────────────────────────────────────────────────── */
+
+.rows { list-style: none; margin: 0; padding: 0; }
+.rows li {
+  display: flex; align-items: baseline; gap: var(--space-4); flex-wrap: wrap;
+  padding: var(--space-4) var(--space-3);
+  background: linear-gradient(to right,
+    transparent, color-mix(in srgb, var(--color-text) 8%, transparent) 48px,
+    color-mix(in srgb, var(--color-text) 8%, transparent) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+}
+.rows li:hover { background-color: color-mix(in srgb, var(--color-text) 4%, transparent); }
+.rows .title { font-size: 13.5px; color: var(--color-text); font-weight: var(--font-heading-weight); }
+.rows .title:hover { color: var(--color-accent-300); text-decoration: none; }
+.rows .meta { flex-basis: 100%; font-size: 11.5px; color: var(--color-neutral-500); }
+.rows .meta code { color: var(--color-neutral-400); }
+.rows li.empty { display: block; }
+
+.empty { color: var(--color-neutral-500); font-size: 13px; }
+.empty-state {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  padding: var(--space-8) 0; color: var(--color-neutral-500);
+}
+.empty-state h2 { color: var(--color-neutral-300); font-size: 17px; }
+
+/* ── conversation ─────────────────────────────────────────────────────────── */
+
+.comment {
+  background: var(--color-surface); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm); overflow: hidden;
+}
+.comment > header {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
+  font-size: 12.5px; color: var(--color-neutral-300);
+}
+.comment > header .who { font-weight: var(--font-heading-weight); color: var(--color-neutral-200); }
+.comment > header .tag { margin-left: auto; }
+.comment .markdown { padding: var(--space-6); }
+
+form.composer { display: flex; flex-direction: column; gap: var(--space-3); }
+.composer .actions { justify-content: flex-start; }
+.signed-out { font-size: 13px; color: var(--color-neutral-500); }
+
+/* ── pull requests ────────────────────────────────────────────────────────── */
+
+.pr-head { display: flex; flex-direction: column; gap: var(--space-2); }
+.pr-head .line { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.pr-head h1 { margin: 0; font-size: 20px; }
+.pr-head .number { color: var(--color-neutral-600); font-weight: 400; }
+.pr-head .byline { font-size: 12px; color: var(--color-neutral-500); }
+.pr-head .byline code { color: var(--color-neutral-300); font-size: 12px; }
+
+/* The merge box: the one place on the page where a decision is taken, so it
+   gets an edge and an icon rather than sitting in the flow. */
+.merge-box {
+  display: flex; align-items: center; gap: var(--space-4);
+  background: var(--color-surface); border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-6);
+}
+.merge-box svg { flex: none; color: var(--color-accent); }
+.merge-box .say { flex: 1; min-width: 0; }
+.merge-box .headline { font-size: 13px; color: var(--color-text); font-weight: var(--font-heading-weight); }
+.merge-box .detail { display: block; font-size: 11.5px; color: var(--color-neutral-500); }
+.merge-box form { margin: 0; }
+.merge-box.blocked svg { color: var(--status-bad); }
+
+/* Conflicts. The agentic resolution the design shows is not something this
+   forge can do yet, so the panel says what actually happened — which files
+   collide, and the three commands that resolve them. */
+.conflict-panel {
+  border: 1px solid var(--status-bad-dim); border-radius: var(--radius-md); overflow: hidden;
+}
+.conflict-panel > header {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-6);
+  background: color-mix(in srgb, var(--status-bad) 10%, transparent);
+  font-size: 13px; color: var(--color-neutral-200);
+}
+.conflict-panel > header svg { color: var(--status-bad); flex: none; }
+.conflict-panel > header .count-note { margin-left: auto; font-size: 11px; color: var(--color-neutral-400); }
+.conflict-files { list-style: none; margin: 0; padding: 0; }
+.conflict-files li {
+  padding: var(--space-2) var(--space-6);
+  font-family: var(--font-mono); font-size: 12px; color: var(--color-neutral-300);
+  border-bottom: 1px solid var(--color-divider);
+}
+.conflict-panel .how { padding: var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); }
+.conflict-panel .how p { margin: 0; font-size: 12px; color: var(--color-neutral-500); }
+.conflict-panel .how pre {
+  margin: 0; background: var(--color-bg); border-radius: var(--radius-sm);
+  padding: var(--space-4); overflow-x: auto; color: var(--color-neutral-300);
+}
+
+/* ── checks ───────────────────────────────────────────────────────────────── */
+
 .check-list, .check-jobs { list-style: none; margin: 0; padding: 0; }
+.check-list { display: flex; flex-direction: column; gap: var(--space-3); }
 .check {
-  border: 1px solid var(--border);
-  border-left-width: 3px;
-  border-radius: 6px;
-  padding: 0.6rem 0.8rem;
-  margin-bottom: 0.5rem;
+  border-left: 2px solid var(--color-neutral-800);
+  padding-left: var(--space-4);
 }
-.check-name { font-weight: 600; }
-.check-status, .job-status { color: var(--muted); font-size: 0.9em; margin-left: 0.5rem; }
-.check-jobs { margin-top: 0.4rem; padding-left: 0.8rem; }
-.check-job { padding: 0.15rem 0; font-size: 0.95em; }
+.check-line { display: flex; align-items: baseline; gap: var(--space-2); font-size: 12.5px; }
+.check-line .name { color: var(--color-neutral-200); min-width: 0; overflow-wrap: anywhere; }
+.check-line .state { margin-left: auto; font-size: 11px; color: var(--color-neutral-500); }
+.check-jobs { margin-top: var(--space-1); display: flex; flex-direction: column; gap: 2px; }
+.check-job { display: flex; align-items: baseline; gap: var(--space-2); font-size: 11.5px; }
+.check-job .name { color: var(--color-neutral-400); }
+.check-job .state { margin-left: auto; color: var(--color-neutral-600); }
 
-/* Status is carried by a border and a label, never by colour alone — a
-   red/green-only signal is invisible to a good fraction of readers. */
-.check.success, .check-job.success { border-left-color: var(--ok, #1a7f37); }
-.check.failed, .check-job.failed { border-left-color: var(--bad, #cf222e); }
-.check.infra, .check-job.infra { border-left-color: var(--warn, #9a6700); }
-.check.running, .check-job.running { border-left-color: var(--accent, #0969da); }
-.check.queued, .check.unknown { border-left-color: var(--border); }
+/* The glyph is a second channel; the status word is always printed beside it,
+   so nothing here is carried by colour alone. */
+.glyph { flex: none; font-family: var(--font-mono); width: 0.9em; text-align: center; }
+.check.success, .check-job.success { border-left-color: var(--color-accent); }
+.check.success > .check-line .glyph, .check-job.success .glyph { color: var(--color-accent); }
+.check.failed, .check-job.failed { border-left-color: var(--status-bad); }
+.check.failed > .check-line .glyph, .check-job.failed .glyph { color: var(--status-bad); }
+.check.infra, .check-job.infra { border-left-color: var(--status-warn); }
+.check.infra > .check-line .glyph, .check-job.infra .glyph { color: var(--status-warn); }
+.check.running, .check-job.running { border-left-color: var(--color-accent-700); }
+.check.running > .check-line .glyph, .check-job.running .glyph { color: var(--color-accent-400); }
+.check.queued, .check.unknown, .check-job.queued, .check-job.unknown { border-left-color: var(--color-neutral-800); }
+.check.queued .glyph, .check.unknown .glyph, .check-job.queued .glyph, .check-job.unknown .glyph { color: var(--color-neutral-600); }
+.checks-note { font-size: 11.5px; color: var(--color-neutral-500); margin: var(--space-3) 0 0; }
 
-.checks-note { color: var(--muted); font-size: 0.9em; margin: 0.4rem 0 0; }
+/* ── reviewers ────────────────────────────────────────────────────────────── */
+
+.reviewers { display: flex; flex-direction: column; gap: var(--space-3); font-size: 12.5px; }
+.reviewers > div { display: flex; align-items: center; gap: var(--space-3); }
+.reviewers .who { color: var(--color-neutral-300); }
+.reviewers .tag { margin-left: auto; }
+
+/* ── auth, errors ─────────────────────────────────────────────────────────── */
+
+form.auth {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  width: min(360px, 100%); margin: 8vh auto 0;
+  background: var(--color-surface); box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-lg); padding: var(--space-8);
+}
+form.auth h1 { font-size: 22px; margin-bottom: var(--space-2); }
+form.auth p { margin: 0; font-size: 12.5px; color: var(--color-neutral-500); }
+form.auth .btn { margin-top: var(--space-2); }
+.error { color: var(--status-bad); font-size: 12.5px; }
+.error-page { text-align: center; padding: 12vh 0; }
+.error-page h1 { font-size: 56px; color: var(--color-neutral-700); margin-bottom: var(--space-4); }
+.error-page p { color: var(--color-neutral-400); }
+
+/* ── profile ──────────────────────────────────────────────────────────────── */
+
+.profile-head { display: flex; align-items: center; gap: var(--space-6); margin-bottom: var(--space-8); }
+.profile-head .monogram { width: 46px; height: 46px; font-size: 17px; }
+.profile-head h1 { margin: 0; font-size: 22px; }
+.profile-head .meta { font-size: 12px; color: var(--color-neutral-500); }
+
+.repo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--space-4); }
+.repo-card { display: flex; flex-direction: column; gap: var(--space-2); }
+.repo-card .name { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 14px; }
+.repo-card .description { font-size: 12.5px; color: var(--color-neutral-500); flex: 1; }

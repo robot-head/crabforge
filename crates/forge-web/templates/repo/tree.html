@@ -1,41 +1,78 @@
 {% extends "layout.html" %}
 {% block repo_content %}
-<div class="toolbar">
-  <span class="revision">{{ revision }}</span>
-  {% if !path.is_empty() %}
-    <span class="breadcrumb">/ {{ path }}</span>
-  {% endif %}
-  <span class="clone">git clone {{ clone_url }}</span>
-</div>
+<div class="split">
+  <div class="stack">
+    <div class="toolbar">
+      <span class="revision">{{ revision }}</span>
+      {% if !path.is_empty() %}
+        <span class="breadcrumb">/ {{ path }}</span>
+      {% endif %}
+    </div>
 
-{% if empty %}
-  <div class="empty">
-    <h2>This repository is empty</h2>
-    <p>Push something to it:</p>
-    <pre><code>git remote add origin {{ clone_url }}
+    {% if empty %}
+      <div class="empty-state">
+        <h2>This repository is empty</h2>
+        <p>Push something to it:</p>
+        <pre><code>git remote add origin {{ clone_url }}
 git push -u origin {{ default_branch }}</code></pre>
-  </div>
-{% else %}
-  <table class="tree">
-    {% if !path.is_empty() %}
-      <tr><td colspan="3"><a href="{{ parent_url }}">..</a></td></tr>
-    {% endif %}
-    {% for entry in entries %}
-      <tr>
-        <td class="kind">{{ entry.icon }}</td>
-        <td><a href="{{ entry.url }}">{{ entry.name }}</a></td>
-        <td class="size">{{ entry.size }}</td>
-      </tr>
-    {% endfor %}
-  </table>
+      </div>
+    {% else %}
+      {% match latest %}
+        {% when Some with (c) %}
+          <div class="last-commit">
+            <span class="monogram monogram-sm monogram-neutral">{{ c.initials }}</span>
+            <span class="who">{{ c.author }}</span>
+            <a class="summary" href="/{{ owner }}/{{ repo }}/commit/{{ c.oid }}">{{ c.summary }}</a>
+            <code>{{ c.short }}</code>
+            <span>{{ c.when }}</span>
+          </div>
+        {% when None %}
+      {% endmatch %}
 
-  {% match readme %}
-    {% when Some with (r) %}
-      <article class="readme">
-        <h2>{{ r.name }}</h2>
-        <div class="markdown">{{ r.html }}</div>
-      </article>
-    {% when None %}
-  {% endmatch %}
-{% endif %}
+      <table class="table tree">
+        <tbody>
+          {% if !path.is_empty() %}
+            <tr><td></td><td colspan="2"><a href="{{ parent_url }}">..</a></td></tr>
+          {% endif %}
+          {% for entry in entries %}
+            <tr>
+              <td><span aria-hidden="true">{{ entry.icon }}</span><span class="sr-only">{{ entry.kind }}</span></td>
+              <td><a href="{{ entry.url }}">{{ entry.name }}</a></td>
+              <td class="size">{{ entry.size }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      {% match readme %}
+        {% when Some with (r) %}
+          <article class="panel readme">
+            <div class="panel-head"><h2>{{ r.name }}</h2></div>
+            <div class="panel-body markdown">{{ r.html }}</div>
+          </article>
+        {% when None %}
+      {% endmatch %}
+    {% endif %}
+  </div>
+
+  <div class="rail">
+    <div class="card elev-sm">
+      <span class="card-kicker">About</span>
+      {% match description %}
+        {% when Some with (d) %}<p class="card-body">{{ d }}</p>
+        {% when None %}<p class="card-body">No description yet.</p>
+      {% endmatch %}
+      <div class="card-rows">
+        <div><span class="k">Default branch</span><span class="v mono">{{ default_branch }}</span></div>
+        <div><span class="k">Visibility</span><span class="v">{% if private %}Private{% else %}Public{% endif %}</span></div>
+        <div><span class="k">Open issues</span><span class="v">{{ open_issues }}</span></div>
+      </div>
+    </div>
+    <div class="card elev-sm">
+      <span class="card-kicker">Clone</span>
+      <code class="clone-url">git clone {{ clone_url }}</code>
+      <span class="card-meta">Clones replay the object topic — delete the cache and clone again.</span>
+    </div>
+  </div>
+</div>
 {% endblock %}

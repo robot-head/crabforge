@@ -47,6 +47,7 @@ pub async fn show(
     Ok(ProfilePage {
         csrf: session::csrf_token(&state, viewer.as_ref()),
         viewer,
+        initials: crate::pages::initials(&user.username),
         username: user.username,
         repos,
     }

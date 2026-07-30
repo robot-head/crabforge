@@ -1,15 +1,30 @@
 {% extends "base.html" %}
 {% block title %}{{ username }}{% endblock %}
 {% block content %}
-<h1>{{ username }}</h1>
-<ul class="repos">
-  {% for r in repos %}
-    <li>
-      <a href="/{{ username }}/{{ r.name }}">{{ r.name }}</a>
-      {% match r.description %}{% when Some with (d) %}<span class="description">{{ d }}</span>{% when None %}{% endmatch %}
-    </li>
-  {% else %}
-    <li class="empty">No repositories yet.</li>
-  {% endfor %}
-</ul>
+<div class="profile-head">
+  <span class="monogram">{{ initials }}</span>
+  <div>
+    <h1>{{ username }}</h1>
+    <span class="meta">{{ repos.len() }} repositories</span>
+  </div>
+</div>
+
+{% if repos.is_empty() %}
+  <div class="empty-state">
+    <h2>No repositories yet</h2>
+    <p>Create one over the API, then push to it — the object topic is the object database.</p>
+  </div>
+{% else %}
+  <div class="repo-grid">
+    {% for r in repos %}
+      <div class="card elev-sm repo-card">
+        <a class="name" href="/{{ username }}/{{ r.name }}">{{ r.name }}</a>
+        {% match r.description %}
+          {% when Some with (d) %}<span class="description">{{ d }}</span>
+          {% when None %}<span class="description">No description.</span>
+        {% endmatch %}
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
 {% endblock %}

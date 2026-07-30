@@ -1,22 +1,24 @@
 {% extends "../repo/layout.html" %}
 {% block repo_content %}
-<div class="toolbar">
-  <a href="/{{ owner }}/{{ repo }}/pulls?state=open" {% if showing_open %}class="active"{% endif %}>{{ open_count }} open</a>
-  <a href="/{{ owner }}/{{ repo }}/pulls?state=closed" {% if !showing_open %}class="active"{% endif %}>{{ closed_count }} closed</a>
-</div>
+<div class="stack">
+  <div class="toolbar">
+    <a href="/{{ owner }}/{{ repo }}/pulls?state=open" {% if showing_open %}class="active"{% endif %}>{{ open_count }} open</a>
+    <a href="/{{ owner }}/{{ repo }}/pulls?state=closed" {% if !showing_open %}class="active"{% endif %}>{{ closed_count }} closed</a>
+  </div>
 
-<ul class="issues">
-  {% for p in pulls %}
-    <li>
-      <a class="title" href="/{{ owner }}/{{ repo }}/pulls/{{ p.number }}">{{ p.title }}</a>
-      <span class="meta">
-        #{{ p.number }} by {{ p.author }} &middot;
-        <code>{{ p.source_branch }}</code> &rarr; <code>{{ p.target_branch }}</code>
-        {% if p.merged %}&middot; <span class="chip merged">Merged</span>{% endif %}
-      </span>
-    </li>
-  {% else %}
-    <li class="empty">No pull requests.</li>
-  {% endfor %}
-</ul>
+  <ul class="rows">
+    {% for p in pulls %}
+      <li>
+        <a class="title" href="/{{ owner }}/{{ repo }}/pulls/{{ p.number }}">{{ p.title }}</a>
+        {% if p.merged %}<span class="tag merged">Merged</span>{% endif %}
+        <span class="meta">
+          #{{ p.number }} by {{ p.author }} &middot;
+          <code>{{ p.source_branch }}</code> &rarr; <code>{{ p.target_branch }}</code>
+        </span>
+      </li>
+    {% else %}
+      <li class="empty">No pull requests.</li>
+    {% endfor %}
+  </ul>
+</div>
 {% endblock %}

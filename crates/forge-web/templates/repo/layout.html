@@ -2,15 +2,16 @@
 {% block title %}{{ owner }}/{{ repo }}{% endblock %}
 {% block content %}
 <div class="repo-header">
-  <h1><a href="/{{ owner }}">{{ owner }}</a> / <a href="/{{ owner }}/{{ repo }}">{{ repo }}</a>
-    {% if private %}<span class="chip">Private</span>{% endif %}
-  </h1>
+  <div class="repo-title">
+    <h1><a href="/{{ owner }}">{{ owner }}</a> <span class="sep">/</span> <a href="/{{ owner }}/{{ repo }}">{{ repo }}</a></h1>
+    {% if private %}<span class="tag tag-neutral">Private</span>{% endif %}
+  </div>
   {% match description %}{% when Some with (d) %}<p class="description">{{ d }}</p>{% when None %}{% endmatch %}
   <nav class="tabs">
-    <a href="/{{ owner }}/{{ repo }}">Code</a>
-    <a href="/{{ owner }}/{{ repo }}/issues">Issues <span class="badge">{{ open_issues }}</span></a>
-    <a href="/{{ owner }}/{{ repo }}/pulls">Pull requests</a>
-    <a href="/{{ owner }}/{{ repo }}/commits/{{ default_branch }}">Commits</a>
+    <a href="/{{ owner }}/{{ repo }}"{% if tab == "code" %} aria-current="page"{% endif %}>Code</a>
+    <a href="/{{ owner }}/{{ repo }}/pulls"{% if tab == "pulls" %} aria-current="page"{% endif %}>Pull requests</a>
+    <a href="/{{ owner }}/{{ repo }}/issues"{% if tab == "issues" %} aria-current="page"{% endif %}>Issues <span class="count">{{ open_issues }}</span></a>
+    <a href="/{{ owner }}/{{ repo }}/commits/{{ default_branch }}"{% if tab == "commits" %} aria-current="page"{% endif %}>Commits</a>
   </nav>
 </div>
 {% block repo_content %}{% endblock %}

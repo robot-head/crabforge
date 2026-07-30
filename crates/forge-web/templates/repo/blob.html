@@ -1,15 +1,18 @@
 {% extends "layout.html" %}
 {% block repo_content %}
-<div class="toolbar">
-  <span class="revision">{{ revision }}</span>
-  <span class="breadcrumb">/ {{ path }}</span>
-  <span class="meta">{{ size }}</span>
-  <a href="/{{ owner }}/{{ repo }}/raw/{{ revision }}/{{ path }}">Raw</a>
-</div>
+<div class="stack">
+  <div class="toolbar">
+    <span class="revision">{{ revision }}</span>
+    <span class="breadcrumb">/ {{ path }}</span>
+    <span>{{ size }}</span>
+    <span class="spacer"></span>
+    <a class="btn btn-secondary" href="/{{ owner }}/{{ repo }}/raw/{{ revision }}/{{ path }}">Raw</a>
+  </div>
 
-{% if binary %}
-  <div class="empty"><p>This is a binary file and cannot be displayed.</p></div>
-{% else %}
-  <div class="blob"><pre><code>{{ highlighted }}</code></pre></div>
-{% endif %}
+  {% if binary %}
+    <div class="empty-state"><p>This is a binary file and cannot be displayed.</p></div>
+  {% else %}
+    <div class="blob"><pre><code>{{ highlighted }}</code></pre></div>
+  {% endif %}
+</div>
 {% endblock %}

@@ -1,9 +1,15 @@
 {% extends "../repo/layout.html" %}
 {% block repo_content %}
-<form method="post" action="/{{ owner }}/{{ repo }}/issues" class="composer">
-  <input type="hidden" name="csrf" value="{{ csrf }}">
-  <input type="text" name="title" placeholder="Title" required maxlength="255" autofocus>
-  <textarea name="body" rows="10" placeholder="Describe the issue"></textarea>
-  <div class="actions"><button type="submit">Open issue</button></div>
-</form>
+<div class="stack" style="max-width:820px">
+  <h2>New issue</h2>
+  <form method="post" action="/{{ owner }}/{{ repo }}/issues" class="composer">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input class="input" type="text" name="title" placeholder="Title" required maxlength="255" autofocus>
+    <textarea name="body" rows="10" placeholder="Describe the issue"></textarea>
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Open issue</button>
+      <a class="btn btn-secondary" href="/{{ owner }}/{{ repo }}/issues">Cancel</a>
+    </div>
+  </form>
+</div>
 {% endblock %}

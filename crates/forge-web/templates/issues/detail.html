@@ -1,37 +1,56 @@
 {% extends "../repo/layout.html" %}
 {% block repo_content %}
-<div class="issue-header">
-  <h2>{{ title }} <span class="number">#{{ number }}</span></h2>
-  <p class="meta">
-    <span class="chip {% if open %}open{% else %}closed{% endif %}">{% if open %}Open{% else %}Closed{% endif %}</span>
-    {{ author }} opened this issue
-  </p>
-</div>
-
-<article class="comment">
-  <header>{{ author }}</header>
-  <div class="markdown">{{ body }}</div>
-</article>
-
-{% for c in comments %}
-  <article class="comment">
-    <header>{{ c.author }}</header>
-    <div class="markdown">{{ c.body }}</div>
-  </article>
-{% endfor %}
-
-{% if can_write %}
-  <form method="post" action="/{{ owner }}/{{ repo }}/issues/{{ number }}/comments" class="composer">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <textarea name="body" rows="5" placeholder="Leave a comment" required></textarea>
-    <div class="actions">
-      <button type="submit" name="action" value="comment">Comment</button>
-      <button type="submit" name="action" value="{% if open %}close{% else %}reopen{% endif %}" class="secondary">
-        {% if open %}Close issue{% else %}Reopen issue{% endif %}
-      </button>
+<div class="split">
+  <div class="stack">
+    <div class="pr-head">
+      <div class="line">
+        <h1>{{ title }} <span class="number">#{{ number }}</span></h1>
+        <span class="tag {% if open %}open{% else %}closed{% endif %}">{% if open %}Open{% else %}Closed{% endif %}</span>
+      </div>
+      <span class="byline">{{ author }} opened this issue</span>
     </div>
-  </form>
-{% else %}
-  <p class="signed-out"><a href="/login">Sign in</a> to comment.</p>
-{% endif %}
+
+    <article class="comment">
+      <header>
+        <span class="monogram monogram-sm monogram-neutral">{{ author_initials }}</span>
+        <span class="who">{{ author }}</span>
+      </header>
+      <div class="markdown">{{ body }}</div>
+    </article>
+
+    {% for c in comments %}
+      <article class="comment">
+        <header>
+          <span class="monogram monogram-sm monogram-neutral">{{ c.initials }}</span>
+          <span class="who">{{ c.author }}</span>
+        </header>
+        <div class="markdown">{{ c.body }}</div>
+      </article>
+    {% endfor %}
+
+    {% if can_write %}
+      <form method="post" action="/{{ owner }}/{{ repo }}/issues/{{ number }}/comments" class="composer">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <textarea name="body" rows="5" placeholder="Leave a comment" required></textarea>
+        <div class="actions">
+          <button type="submit" name="action" value="comment" class="btn btn-primary">Comment</button>
+          <button type="submit" name="action" value="{% if open %}close{% else %}reopen{% endif %}" class="btn btn-secondary">{% if open %}Close issue{% else %}Reopen issue{% endif %}</button>
+        </div>
+      </form>
+    {% else %}
+      <p class="signed-out"><a href="/login">Sign in</a> to comment.</p>
+    {% endif %}
+  </div>
+
+  <div class="rail">
+    <div class="card elev-sm">
+      <span class="card-kicker">This issue</span>
+      <div class="card-rows">
+        <div><span class="k">State</span><span class="v">{% if open %}Open{% else %}Closed{% endif %}</span></div>
+        <div><span class="k">Opened by</span><span class="v">{{ author }}</span></div>
+        <div><span class="k">Comments</span><span class="v">{{ comments.len() }}</span></div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
