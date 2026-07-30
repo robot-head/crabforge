@@ -116,7 +116,13 @@ impl Worker {
             let Some(request) = readable_request(record.value.as_deref()) else {
                 continue;
             };
-            self.deliver_with_retries(&request).await?;
+            let span = tracing::info_span!(
+                "webhook_deliver",
+                webhook_id = %request.webhook_id,
+                delivery = %request.delivery_id,
+            );
+            forge_bus::join_trace(&span, record);
+            tracing::Instrument::instrument(self.deliver_with_retries(&request), span).await?;
             handled += 1;
         }
 
@@ -183,7 +189,15 @@ impl Worker {
                 attempt,
             };
 
+            let started = std::time::Instant::now();
             let outcome = self.deliverer.send(&delivery).await;
+            // Labelled with the same word the stored history uses, so a
+            // dashboard and the deliveries table cannot disagree about what
+            // "dead" means.
+            forge_metrics::record_delivery(
+                outcome.status_word(attempt),
+                started.elapsed().as_secs_f64(),
+            );
             self.record(request, attempt, &outcome).await?;
 
             match &outcome {

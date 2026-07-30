@@ -161,3 +161,41 @@ async fn concurrent_registrations_of_one_name_yield_exactly_one_winner() {
     check!(winners == 1, "exactly one registration may succeed");
     check!(service.claim_count().await == 1);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn creating_a_repository_provisions_its_object_topic() {
+    // Git objects live in a topic per repository and the broker does not
+    // auto-create topics, so a repository without one cannot be cloned — the
+    // first fetch fails with `UNKNOWN_TOPIC` and the forge answers 500.
+    //
+    // This went unnoticed because every test that clones or pushes provisions
+    // the topic itself before starting, which is a thing no production caller
+    // does. The sequence in the README — create a repository over the API, then
+    // `git clone` it — did not work.
+    let broker = TestBroker::with_forge_topics().await;
+    let service = CommandService::start(&broker.bootstrap()).await.unwrap();
+
+    let owner = service
+        .register_user(registration("octocat"))
+        .await
+        .unwrap();
+    let repo = service
+        .create_repo(CreateRepo {
+            owner: owner.id,
+            owner_name: Username::parse("octocat").unwrap(),
+            name: "Hello-World".to_string(),
+            description: None,
+            visibility: Visibility::Public,
+        })
+        .await
+        .unwrap();
+
+    let mut admin = broker.admin().await;
+    let missing = forge_topics::missing(&mut admin, &[forge_topics::repo_objects_topic(repo.id)])
+        .await
+        .unwrap();
+    check!(
+        missing.is_empty(),
+        "the repository's object topic was not provisioned: {missing:?}"
+    );
+}

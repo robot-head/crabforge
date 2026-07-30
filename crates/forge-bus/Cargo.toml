@@ -15,6 +15,7 @@ bytes.workspace = true
 crabka-client-core.workspace = true
 crabka-client-producer.workspace = true
 crabka-protocol.workspace = true
+crabka-telemetry.workspace = true
 forge-events.workspace = true
 forge-types.workspace = true
 serde.workspace = true
@@ -25,5 +26,10 @@ tracing.workspace = true
 
 [dev-dependencies]
 assert2.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+serde_json.workspace = true
+tracing-opentelemetry.workspace = true
+tracing-subscriber.workspace = true
 forge-testkit.workspace = true
 forge-topics.workspace = true

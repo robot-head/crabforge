@@ -113,16 +113,21 @@ impl StepResult {
 ///
 /// The callback is `Send` because a runner is spawned onto the executor, and a
 /// future holding a non-`Send` reference across an await cannot be.
-#[allow(async_fn_in_trait)]
+///
+/// The returned future is spelled out rather than written as an `async fn` for
+/// the same reason: `async fn` in a trait leaves the future's auto traits
+/// unbounded, so a caller generic over `Sandbox` cannot spawn it. That only
+/// shows up when there is more than one implementation to be generic over,
+/// which is what the Kubernetes sandbox made true.
 pub trait Sandbox {
     /// Run one shell command, streaming its output.
-    async fn run_step(
+    fn run_step(
         &self,
         command: &str,
         env: &BTreeMap<String, String>,
         timeout: Duration,
         on_line: &mut (dyn FnMut(&str) + Send),
-    ) -> StepResult;
+    ) -> impl Future<Output = StepResult> + Send;
 }
 
 /// Runs steps as child processes on this host.

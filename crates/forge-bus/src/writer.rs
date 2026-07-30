@@ -131,20 +131,34 @@ impl PendingRecord {
         }
     }
 
+    /// Encode for the producer, attaching the writer's W3C trace context.
+    ///
+    /// Every record, not just domain events: the log is the only thing joining
+    /// the forge's processes, so a push, the command that decided it, the
+    /// projection that applied it, the webhook it triggered and the CI job it
+    /// queued are one trace only if the context travels with the record. The CI
+    /// queue in particular carries no envelope, so attaching this in
+    /// [`PendingRecord::event`] would leave the runner out of the trace.
+    ///
+    /// Attached here rather than at construction so it is the context of the
+    /// task that *writes* — a record built in one span and transacted in
+    /// another belongs to the transaction.
     fn into_producer_record(self) -> ProducerRecord {
+        let headers = self
+            .headers
+            .into_iter()
+            .chain(crabka_telemetry::propagation::current_trace_headers())
+            .map(|(key, value)| Header {
+                key,
+                value: Some(Bytes::from(value.into_bytes())),
+            })
+            .collect();
         ProducerRecord {
             topic: self.topic,
             partition: None,
             key: Some(Bytes::from(self.key.into_bytes())),
             value: self.value.map(Bytes::from),
-            headers: self
-                .headers
-                .into_iter()
-                .map(|(key, value)| Header {
-                    key,
-                    value: Some(Bytes::from(value.into_bytes())),
-                })
-                .collect(),
+            headers,
             timestamp_ms: None,
         }
     }

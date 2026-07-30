@@ -217,6 +217,22 @@ impl Tailer {
     }
 }
 
+/// Make `span` a child of the trace the record was written in.
+///
+/// The other half of the `traceparent` header [`crate::PendingRecord::event`]
+/// attaches. A no-op if the record carries no context — records written before
+/// this existed, or by something that is not the forge — so it is safe to call
+/// on every record rather than only the ones known to have one.
+pub fn join_trace(span: &tracing::Span, record: &FetchedRecord) {
+    crabka_telemetry::propagation::set_remote_parent(
+        span,
+        record
+            .headers
+            .iter()
+            .filter_map(|h| h.value.as_ref().map(|v| (h.key.as_str(), v.as_ref()))),
+    );
+}
+
 fn resolve_bootstrap(bootstrap: &str) -> Result<SocketAddr, TailError> {
     bootstrap
         .to_socket_addrs()

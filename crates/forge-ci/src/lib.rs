@@ -14,6 +14,7 @@
 
 pub mod discover;
 pub mod docker;
+mod kubernetes;
 pub mod orchestrate;
 pub mod plan;
 pub mod queue;
@@ -24,6 +25,7 @@ pub mod workflow;
 
 pub use discover::{Discovered, Found, WORKFLOW_DIR, discover};
 pub use docker::{DockerSandbox, DockerSandboxes, docker_available};
+pub use kubernetes::{KubernetesSandbox, KubernetesSandboxes, kubernetes_available};
 pub use orchestrate::{OrchestrateError, Orchestrator};
 pub use plan::{PlannedJob, PlannedRun, plan_push};
 pub use queue::{Disposition, JobQueue, Lease, QueueError, QueuedJob, RUNNER_GROUP};

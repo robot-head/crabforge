@@ -1,9 +1,15 @@
 //! Test fixtures for Crabforge.
 //!
 //! [`TestBroker`] boots a real crabka broker inside the test process — no
-//! external daemon, no ports to coordinate, and share groups already enabled
-//! (`BrokerConfig::for_tests` turns on the test feature flags, whereas a
-//! `crabka format`-ed broker defaults `share.version` to 0).
+//! external daemon and no ports to coordinate.
+//!
+//! Its `share.version` is 0, and there is nothing to be done about that:
+//! KIP-584 feature levels are written when a log directory is formatted and
+//! `BrokerConfig` has no field for them, so an in-process broker always starts
+//! at the registry defaults. The CI queue works regardless, because crabka's
+//! share-group handlers do not consult the level — established by
+//! `forge-ci/tests/queue.rs` and pinned by `forge-bus/tests/features.rs`, both
+//! of which fail if that changes.
 //!
 //! Every forge crate takes this crate as a `dev-dependency` only, so no service
 //! binary ever links the broker.

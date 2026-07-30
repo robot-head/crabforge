@@ -16,6 +16,7 @@ flate2.workspace = true
 forge-bus.workspace = true
 forge-command.workspace = true
 forge-git.workspace = true
+forge-metrics.workspace = true
 forge-store.workspace = true
 forge-types.workspace = true
 serde.workspace = true

@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 forge-bus.workspace = true
 forge-events.workspace = true
+forge-metrics.workspace = true
 forge-store.workspace = true
 forge-types.workspace = true
 time.workspace = true

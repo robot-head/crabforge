@@ -55,6 +55,8 @@ pub enum CommandError {
         expected: String,
         actual: Option<String>,
     },
+    #[error("provisioning the repository's object topic: {0}")]
+    Topic(#[from] forge_topics::TopicError),
     #[error(transparent)]
     Write(#[from] WriteError),
     #[error("replaying state: {0}")]
@@ -243,6 +245,24 @@ impl CommandService {
         }
 
         let repo_id = RepoId::new();
+
+        // Git objects live in a topic of their own, one per repository, and it
+        // has to exist before anything reads or writes it — the broker does not
+        // auto-create topics, so the first clone of a repository without one
+        // fails with `UNKNOWN_TOPIC` rather than an empty repository.
+        //
+        // Before the transaction rather than after, because the two cannot be
+        // atomic: `CreateTopics` is not part of a Kafka transaction. Getting
+        // the order wrong in the other direction leaves a repository whose
+        // storage does not exist; this way a failed commit leaves an empty
+        // topic nobody references, which the next attempt reuses because
+        // `ensure_repo` treats "already exists" as success.
+        let mut admin =
+            crabka_client_admin::AdminClient::connect(std::slice::from_ref(&self.bootstrap))
+                .await
+                .map_err(forge_topics::TopicError::from)?;
+        forge_topics::ensure_repo(&mut admin, repo_id).await?;
+
         let event = RepoEvent::Created {
             repo_id,
             owner_id: request.owner,

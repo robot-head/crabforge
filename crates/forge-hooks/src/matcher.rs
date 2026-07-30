@@ -83,7 +83,13 @@ impl Matcher {
 
         let mut queued = 0;
         for record in &batch.records {
-            queued += self.fan_out(record.value.as_deref()).await?;
+            // The delivery this queues inherits the trace of the event that
+            // caused it, so "why did this webhook fire" is one trace back to
+            // the push.
+            let span = tracing::info_span!("webhook_match", offset = record.offset);
+            forge_bus::join_trace(&span, record);
+            queued += tracing::Instrument::instrument(self.fan_out(record.value.as_deref()), span)
+                .await?;
         }
 
         // After the deliveries, never before: a cursor that moved first would

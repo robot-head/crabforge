@@ -176,10 +176,11 @@ impl<F: SandboxFactory> RunnerService<F> {
 
         // Claim it. The loser accepts rather than releases: somebody is running
         // this, and returning it would start a third attempt.
+        let claimed_at = forge_types::now();
         let claimed = self
             .store
             .ci()
-            .claim_job(&job.job_id, attempt, 0, forge_types::now())
+            .claim_job(&job.job_id, attempt, 0, claimed_at)
             .await?;
         if !claimed {
             tracing::debug!(job_id = %job.job_id, attempt, "another runner has this job");
@@ -187,7 +188,24 @@ impl<F: SandboxFactory> RunnerService<F> {
             return Ok(true);
         }
 
+        // Read back for the queue-wait metric. One query per job start, against
+        // a job that is about to run for minutes — and the alternative, carrying
+        // the queued-at timestamp on the queue record, would have the
+        // orchestrator's clock decide what the runner reports.
+        let waited = self
+            .store
+            .ci()
+            .job_by_id(&job.job_id)
+            .await
+            .ok()
+            .flatten()
+            .map_or(0.0, |row| {
+                (claimed_at - row.created_at).as_seconds_f64().max(0.0)
+            });
+
+        let running = std::time::Instant::now();
         let outcome = self.execute(&job, attempt).await?;
+        forge_metrics::record_job(outcome.as_str(), waited, running.elapsed().as_secs_f64());
         tracing::info!(
             job_id = %job.job_id,
             attempt,

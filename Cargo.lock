@@ -1889,15 +1889,20 @@ dependencies = [
  "crabka-client-core",
  "crabka-client-producer",
  "crabka-protocol",
+ "crabka-telemetry",
  "forge-events",
  "forge-testkit",
  "forge-topics",
  "forge-types",
+ "opentelemetry",
+ "opentelemetry_sdk",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1911,6 +1916,7 @@ dependencies = [
  "forge-bus",
  "forge-events",
  "forge-git",
+ "forge-metrics",
  "forge-projector",
  "forge-store",
  "forge-testkit",
@@ -1935,6 +1941,7 @@ dependencies = [
  "assert2",
  "clap",
  "crabka-client-admin",
+ "forge-bus",
  "forge-store",
  "forge-testkit",
  "forge-topics",
@@ -1949,9 +1956,11 @@ name = "forge-command"
 version = "0.1.0"
 dependencies = [
  "assert2",
+ "crabka-client-admin",
  "forge-bus",
  "forge-events",
  "forge-testkit",
+ "forge-topics",
  "forge-types",
  "serde",
  "serde_json",
@@ -2002,6 +2011,7 @@ dependencies = [
  "forge-bus",
  "forge-command",
  "forge-git",
+ "forge-metrics",
  "forge-projector",
  "forge-store",
  "forge-testkit",
@@ -2023,6 +2033,7 @@ dependencies = [
  "axum",
  "forge-bus",
  "forge-events",
+ "forge-metrics",
  "forge-store",
  "forge-testkit",
  "forge-topics",
@@ -2040,6 +2051,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-metrics"
+version = "0.1.0"
+dependencies = [
+ "assert2",
+ "axum",
+ "crabka-telemetry",
+ "prometheus-client",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
 name = "forge-projector"
 version = "0.1.0"
 dependencies = [
@@ -2048,6 +2072,7 @@ dependencies = [
  "forge-command",
  "forge-events",
  "forge-git",
+ "forge-metrics",
  "forge-store",
  "forge-testkit",
  "forge-topics",
@@ -2089,6 +2114,7 @@ dependencies = [
  "forge-git",
  "forge-githttp",
  "forge-hooks",
+ "forge-metrics",
  "forge-projector",
  "forge-render",
  "forge-store",

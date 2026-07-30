@@ -121,6 +121,26 @@ async fn info_refs(
 /// The forge's decision happens inside git's `pre-receive` hook, which calls
 /// back into [`pre_receive_hook`] below — see `receive.rs` for why.
 async fn receive_pack(
+    state: State<Arc<GitState>>,
+    path: Path<(String, String)>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, GitError> {
+    // Timed out here rather than inside, so the measurement covers every exit
+    // including the ones that fail — and covers `prepare`, which may be
+    // rebuilding the whole repository from the log and is the slowest thing
+    // that can happen to a push.
+    let started = std::time::Instant::now();
+    let result = do_receive_pack(state, path, headers, body).await;
+    forge_metrics::record_git(
+        "receive-pack",
+        result.is_ok(),
+        started.elapsed().as_secs_f64(),
+    );
+    result
+}
+
+async fn do_receive_pack(
     State(state): State<Arc<GitState>>,
     Path((owner, repo)): Path<(String, String)>,
     headers: HeaderMap,
@@ -215,6 +235,22 @@ async fn pre_receive_hook(
 
 /// The negotiation and packfile transfer.
 async fn upload_pack(
+    state: State<Arc<GitState>>,
+    path: Path<(String, String)>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, GitError> {
+    let started = std::time::Instant::now();
+    let result = do_upload_pack(state, path, headers, body).await;
+    forge_metrics::record_git(
+        "upload-pack",
+        result.is_ok(),
+        started.elapsed().as_secs_f64(),
+    );
+    result
+}
+
+async fn do_upload_pack(
     State(state): State<Arc<GitState>>,
     Path((owner, repo)): Path<(String, String)>,
     headers: HeaderMap,

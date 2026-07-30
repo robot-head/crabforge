@@ -200,6 +200,21 @@ impl<'a> CiStore<'a> {
         Ok(row.map_or(0, |row| row.get::<_, i64>(0)) + 1)
     }
 
+    /// How many jobs are waiting for a runner.
+    ///
+    /// The number an autoscaler scales on, so it is read from the rows rather
+    /// than from the broker: a share group does not publish its backlog, and
+    /// crabka has no `effective_backlog` gauge yet. gres does serve `count(*)`
+    /// — the aggregate gap is `max`/`sum` over `int8` columns, not counting
+    /// rows — so this needs no workaround.
+    pub async fn queued_jobs(&self) -> Result<i64, StoreError> {
+        let row = self
+            .client
+            .query_one("SELECT count(*) FROM ci_jobs WHERE status = 'queued'", &[])
+            .await?;
+        Ok(row.get::<_, i64>(0))
+    }
+
     pub async fn run_by_id(&self, run_id: &str) -> Result<Option<RunRecord>, StoreError> {
         let row = self
             .client
