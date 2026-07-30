@@ -72,6 +72,14 @@ struct Args {
     #[arg(long, env = "CRABFORGE_CI_NAMESPACE", default_value = "crabforge-ci")]
     ci_namespace: String,
 
+    /// Copies of every partition in the topics this forge creates.
+    ///
+    /// Must match what `crabforge bootstrap` provisioned the static topics
+    /// with — this one governs the per-repository object topics, which the
+    /// command service creates as repositories appear.
+    #[arg(long, env = "CRABFORGE_TOPIC_REPLICATION", default_value_t = 1)]
+    topic_replication: i32,
+
     /// Which part of the forge this process is.
     #[arg(long, env = "CRABFORGE_ROLE", value_enum, default_value_t = Role::All)]
     role: Role,
@@ -111,7 +119,7 @@ async fn serve_everything(args: Args) -> Result<()> {
         .context("schema check — run `crabforge migrate`")?;
 
     // Fences any predecessor and rebuilds decision state before serving.
-    let commands = CommandService::start(&args.bootstrap)
+    let commands = CommandService::start_replicated(&args.bootstrap, args.topic_replication)
         .await
         .context("starting the command service")?;
 
@@ -326,19 +334,22 @@ async fn serve_runners(args: Args) -> Result<()> {
         .context("schema check — run `crabforge migrate`")?;
     drop(store);
 
-    // The webhook writer's identity rather than the command service's: a runner
-    // reports consequences of decisions already committed, and taking the
-    // command service's transactional id would fence the process that makes
-    // them.
+    // An identity of this process's own, and the uniqueness is the whole point.
+    // Every other transactional id in the forge is fixed so a new instance
+    // fences the old one; runners are the one role where several are supposed
+    // to run at once. Sharing an id — the webhook writer's, say — would mean
+    // the second runner to start fenced the first, which would then fail every
+    // event it wrote for a job it had already claimed, and fenced the main
+    // process's webhook and orchestration writer besides.
     let writer = Arc::new(
         forge_bus::FencedWriter::connect_with_id(
             &args.bootstrap,
-            forge_bus::WEBHOOK_TRANSACTIONAL_ID,
+            &forge_bus::runner_transactional_id(),
         )
         .await
         .context("starting the runner's writer")?,
     );
-    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     let ci_workspaces = args.cache_root.join("ci");
     let started = match args.ci_sandbox {
@@ -379,6 +390,15 @@ async fn serve_runners(args: Args) -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("health server error")?;
+
+    // Tell the runners, and give them a moment to notice. Without this a
+    // scale-down kills a runner mid-job: the job is redelivered and run again
+    // from the start, which is safe — the claim is a compare-and-swap — but is
+    // someone's build discarded for no reason. `terminationGracePeriodSeconds`
+    // in the manifest is the outer bound; this is the part that uses it.
+    tracing::info!("draining CI runners");
+    let _ = shutdown_tx.send(true);
+    tokio::time::sleep(RUNNER_DRAIN_GRACE).await;
     Ok(())
 }
 
@@ -449,7 +469,41 @@ async fn publish_queue_depth(store: Store, mut shutdown: tokio::sync::watch::Rec
     }
 }
 
+/// How long a draining runner is given to finish the job it holds.
+///
+/// Shorter than the `terminationGracePeriodSeconds` in
+/// `deploy/k8s/30-runners.yaml`, so the pod is not SIGKILLed in the middle of
+/// this wait — the grace period has to be the outer bound of the two.
+const RUNNER_DRAIN_GRACE: Duration = Duration::from_secs(240);
+
+/// Wait for the runtime to ask this process to stop.
+///
+/// Both signals, and SIGTERM is the one that matters in a deployment: an
+/// orchestrator terminates a pod with SIGTERM and only sends SIGKILL when the
+/// grace period runs out. Listening for Ctrl-C alone means every scale-down
+/// waits out the full grace period and is then killed outright, which for a
+/// runner is a job discarded mid-flight.
 async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(term) => term,
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot listen for SIGTERM; Ctrl-C only");
+                let _ = tokio::signal::ctrl_c().await;
+                tracing::info!("shutting down");
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
     tracing::info!("shutting down");
 }

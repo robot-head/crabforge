@@ -188,7 +188,15 @@ log "posting CloudEvents until one arrives"
 # rather than queued, and `Broker`/`Trigger` report Ready slightly before that
 # has happened. A single post right after Ready is a race the test would lose
 # perhaps half the time, which is worse than no test.
+#
+# The ids carry a per-run nonce because `KEEP=1` reuses the cluster, and with
+# it the sink Deployment and every line it has already logged. Fixed ids would
+# let this run match an event from the last one and report PASS without
+# anything having traversed crabka — the exact false negative the test exists
+# to rule out.
 URL=$(kubectl get broker forge -n "$NS" -o jsonpath='{.status.address.url}')
+RUN="$(date -u +%Y%m%d%H%M%S)-$$"
+log "this run's events are tagged $RUN"
 for attempt in $(seq 1 20); do
   # `-i` is load-bearing: `kubectl run --rm` without it returns as soon as the
   # pod is created and deletes it, so the container may never run at all. The
@@ -196,7 +204,7 @@ for attempt in $(seq 1 20); do
   # the failure looks like a broken Trigger.
   kubectl run "curl-$attempt" -i --rm --restart=Never -n "$NS" --image=curlimages/curl:8.11.1 -- \
     -sS -o /dev/null -X POST "$URL" \
-    -H "Ce-Id: validate-$attempt" \
+    -H "Ce-Id: validate-$RUN-$attempt" \
     -H 'Ce-Specversion: 1.0' \
     -H 'Ce-Type: com.crabforge.validation' \
     -H 'Ce-Source: validate.sh' \
@@ -204,13 +212,13 @@ for attempt in $(seq 1 20); do
     -d '{"hello":"crabka"}' >/dev/null 2>&1 || true
 
   for _ in $(seq 1 5); do
-    if kubectl logs -n "$NS" deployment/sink 2>/dev/null | grep -q "validate-$attempt"; then
+    if kubectl logs -n "$NS" deployment/sink 2>/dev/null | grep -q "validate-$RUN-$attempt"; then
       log "PASS — a CloudEvent round-tripped through crabka (attempt $attempt)"
       # The two extensions that make this proof rather than coincidence: they
       # are the Kafka partition and offset the dispatcher read it from, so the
       # event really did go through a topic on crabka.
       kubectl logs -n "$NS" deployment/sink 2>/dev/null |
-        grep -A8 "validate-$attempt" | grep -i knativekafka || true
+        grep -A8 "validate-$RUN-$attempt" | grep -i knativekafka || true
       exit 0
     fi
     sleep 3

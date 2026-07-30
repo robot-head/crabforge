@@ -27,6 +27,13 @@ data:
   CRABFORGE_LISTEN: "0.0.0.0:7000"
   CRABFORGE_ADMIN_LISTEN: "0.0.0.0:7101"
   CRABFORGE_CACHE: "/var/lib/crabforge/cache"
+  # One copy per broker. The node pools in 10-platform.yaml are three, and
+  # leaving this at the single-broker default would mean three brokers holding
+  # one copy of the event history and every repository's objects. Governs both
+  # the static topics the bootstrap Job creates and the per-repository object
+  # topics the server creates as repositories appear, which is why it lives
+  # here rather than on one of them.
+  CRABFORGE_TOPIC_REPLICATION: "3"
   CRABFORGE_SECURE_COOKIES: "true"
   # CI runs in its own tier; see 30-runners.yaml.
   CRABFORGE_CI_RUNNERS: "0"
@@ -42,6 +49,16 @@ metadata:
   namespace: crabforge
 spec:
   backoffLimit: 10
+  # Delete itself shortly after finishing, so the next `kubectl apply` creates
+  # it again rather than finding a completed Job of the same name and doing
+  # nothing. Without this, the release that adds a topic or a migration skips
+  # provisioning entirely and the new server fails its schema check — and a Job
+  # template is immutable, so `apply` cannot even update it in place.
+  #
+  # Five minutes rather than zero: long enough to read the logs of a failed
+  # deploy, short enough that a re-apply within the same change is rare. If you
+  # do hit it, `kubectl delete job crabforge-bootstrap` and apply again.
+  ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:

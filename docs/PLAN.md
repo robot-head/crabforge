@@ -304,6 +304,20 @@ And three defects it found that nothing else would have:
 - **Log queries return `forbidden` on any forge that runs gres.** See
   [`docs/upstream.md`](upstream.md) §8; the compose now grants the ACL.
 
+### Known gap: CI jobs start in an empty workspace
+
+No sandbox checks the repository out — the container one as much as the pod one
+— so a job sees the commit that triggered it only as `head_oid` and `cargo test`
+in a workflow tests nothing. The tests miss it because they run `echo` and
+`exit 7`, which pass in an empty directory.
+
+M6 described "workspace via shallow clone with a short-lived job token" and that
+part was never built. It needs the token, a clone of the pushed commit from the
+forge's own smart-HTTP endpoint, and an egress rule permitting it, since
+`deploy/k8s` denies all traffic by default. Tagged `TODO(forge:job-checkout)` in
+`forge-ci::sandbox`. Until it lands, Crab Actions runs workflows rather than
+builds.
+
 ### Knative on crabka, answered
 
 `deploy/knative/validate.sh` was run against crabka `f32bf0c` and Knative

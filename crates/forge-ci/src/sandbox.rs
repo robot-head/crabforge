@@ -16,6 +16,20 @@
 //! script does and therefore what people expect. Each step's output is streamed
 //! rather than collected, so a job that hangs still shows what it managed
 //! before it did.
+//!
+//! ## The workspace is empty
+//!
+//! No sandbox checks the repository out. A job starts in an empty directory and
+//! sees the commit that triggered it only as `head_oid` in its environment, so
+//! `cargo test` in a workflow tests nothing. Every sandbox is like this — the
+//! container one as much as the pod one — which is why the tests, which run
+//! `echo` and `exit 7`, all pass.
+//!
+//! What is missing is a checkout step: a short-lived job token, a shallow clone
+//! of the pushed commit from the forge's own smart-HTTP endpoint, and an egress
+//! rule that permits reaching it, since `deploy/k8s` denies all traffic by
+//! default. Until that exists, Crab Actions runs workflows rather than builds.
+//! `TODO(forge:job-checkout)`.
 
 use std::{collections::BTreeMap, path::PathBuf, process::Stdio, time::Duration};
 

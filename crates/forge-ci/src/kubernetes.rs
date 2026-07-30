@@ -36,16 +36,23 @@
 //!   injected regardless of this field; that is the API server's address, which
 //!   is not a secret and is not usable without the token the pod does not have.
 //! * Not root, no capabilities, no privilege escalation, a read-only root
-//!   filesystem with writable `/workspace` and `/tmp`, and capped memory, CPU
-//!   and processes.
+//!   filesystem with writable `/workspace` and `/tmp`, and capped memory and
+//!   CPU.
 //!
-//! **The network is the exception.** Docker has `--network=none`; Kubernetes
-//! has no per-pod equivalent, because pod networking is the CNI's business.
-//! Denying it takes a default-deny `NetworkPolicy` in the namespace — one ships
-//! in `deploy/k8s/` — *and* a CNI that enforces NetworkPolicy at all. On a
-//! cluster without one the policy is accepted and does nothing. That is a
-//! property of the cluster this code cannot assert, so it is documented rather
-//! than claimed.
+//! Two things the container sandbox denies and this one cannot, both because
+//! they are properties of the cluster rather than of a pod, and both therefore
+//! documented rather than claimed:
+//!
+//! * **The network.** Docker has `--network=none`; Kubernetes has no per-pod
+//!   equivalent, because pod networking is the CNI's business. Denying it takes
+//!   a default-deny `NetworkPolicy` in the namespace — one ships in
+//!   `deploy/k8s/` — *and* a CNI that enforces NetworkPolicy at all. On a
+//!   cluster without one the policy is accepted and does nothing.
+//! * **The process count.** `DockerSandbox` passes `--pids-limit=512`; a pod
+//!   spec has no such field. The equivalent is the kubelet's `podPidsLimit`,
+//!   which is node configuration. Without it, a fork bomb in a pull request
+//!   exhausts the node's process table and takes the runner and its neighbours
+//!   with it. Set it on any node pool that runs CI.
 
 use std::{collections::BTreeMap, process::Stdio, time::Duration};
 
@@ -329,9 +336,26 @@ impl Sandbox for KubernetesSandbox {
         timeout: Duration,
         on_line: &mut (dyn FnMut(&str) + Send),
     ) -> StepResult {
-        if let Err(reason) = self.ensure_started().await {
-            return StepResult::infra(reason);
+        // Starting the pod is inside the step's budget, not beside it. The
+        // container sandbox works this way by construction — `docker run` pulls
+        // the image within the same timeout — and doing otherwise here means a
+        // job with a one-minute budget can spend five minutes on a pull it will
+        // never complete and then still be given its minute, holding a runner
+        // for six.
+        let started = std::time::Instant::now();
+        match tokio::time::timeout(timeout, self.ensure_started()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(reason)) => return StepResult::infra(reason),
+            Err(_) => {
+                return StepResult::infra(format!(
+                    "the pod did not start within the step's {}s budget",
+                    timeout.as_secs()
+                ));
+            }
         }
+        // Whatever is left after starting. Saturating, so a step that spent its
+        // whole budget on the pull gets zero rather than wrapping to forever.
+        let timeout = timeout.saturating_sub(started.elapsed());
 
         let mut child = match tokio::process::Command::new("kubectl")
             .args([

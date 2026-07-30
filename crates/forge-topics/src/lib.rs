@@ -62,9 +62,26 @@ pub async fn ensure(admin: &mut AdminClient, specs: &[TopicSpec]) -> Result<(), 
     Ok(())
 }
 
-/// Provision the topics every forge deployment needs.
+/// Provision the topics every forge deployment needs, unreplicated.
 pub async fn ensure_static(admin: &mut AdminClient) -> Result<(), TopicError> {
-    ensure(admin, &static_topics()).await
+    ensure_static_replicated(admin, 1).await
+}
+
+/// Provision them with `replicas` copies of every partition.
+///
+/// The number belongs to the deployment rather than to the manifest: one is
+/// right for the single broker a laptop runs and wrong for the three-broker
+/// cluster `deploy/k8s` describes, where it would mean three brokers and one
+/// copy of the event history.
+pub async fn ensure_static_replicated(
+    admin: &mut AdminClient,
+    replicas: i32,
+) -> Result<(), TopicError> {
+    let specs: Vec<_> = static_topics()
+        .into_iter()
+        .map(|spec| spec.replicated(replicas))
+        .collect();
+    ensure(admin, &specs).await
 }
 
 /// Provision the per-repository object topic.
@@ -72,7 +89,17 @@ pub async fn ensure_static(admin: &mut AdminClient) -> Result<(), TopicError> {
 /// Called when a repository is created, and again lazily on first push so a
 /// repo created before this code shipped still gets its topic.
 pub async fn ensure_repo(admin: &mut AdminClient, repo: RepoId) -> Result<(), TopicError> {
-    ensure(admin, &[repo_objects_topic(repo)]).await
+    ensure_repo_replicated(admin, repo, 1).await
+}
+
+/// The same, with `replicas` copies. A repository's objects are the repository;
+/// on a multi-broker cluster they need as many copies as the event history.
+pub async fn ensure_repo_replicated(
+    admin: &mut AdminClient,
+    repo: RepoId,
+    replicas: i32,
+) -> Result<(), TopicError> {
+    ensure(admin, &[repo_objects_topic(repo).replicated(replicas)]).await
 }
 
 /// Report which of `specs` already exist, for `crabforge doctor`.

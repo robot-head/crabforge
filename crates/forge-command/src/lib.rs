@@ -135,6 +135,11 @@ pub struct CommandService {
     /// unmoved — after another has claimed it but before that claim commits.
     state: Mutex<State>,
     bootstrap: String,
+    /// Copies of every partition in a repository's object topic. Matches
+    /// whatever `crabforge bootstrap` provisioned the static topics with; a
+    /// repository created with fewer copies than the event history would be
+    /// the one thing on the cluster that a single disk failure could lose.
+    topic_replicas: i32,
 }
 
 /// Everything the service decides against.
@@ -147,6 +152,14 @@ struct State {
 impl CommandService {
     /// Connect, fence any predecessor, and rebuild decision state from the log.
     pub async fn start(bootstrap: &str) -> Result<Arc<Self>, CommandError> {
+        Self::start_replicated(bootstrap, 1).await
+    }
+
+    /// The same, creating repository topics with `topic_replicas` copies.
+    pub async fn start_replicated(
+        bootstrap: &str,
+        topic_replicas: i32,
+    ) -> Result<Arc<Self>, CommandError> {
         let writer = FencedWriter::connect(bootstrap).await?;
 
         let mut catalog = Catalog::new();
@@ -179,6 +192,7 @@ impl CommandService {
             writer,
             state: Mutex::new(State { catalog, refs }),
             bootstrap: bootstrap.to_string(),
+            topic_replicas,
         }))
     }
 
@@ -261,7 +275,7 @@ impl CommandService {
             crabka_client_admin::AdminClient::connect(std::slice::from_ref(&self.bootstrap))
                 .await
                 .map_err(forge_topics::TopicError::from)?;
-        forge_topics::ensure_repo(&mut admin, repo_id).await?;
+        forge_topics::ensure_repo_replicated(&mut admin, repo_id, self.topic_replicas).await?;
 
         let event = RepoEvent::Created {
             repo_id,

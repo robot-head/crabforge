@@ -18,4 +18,5 @@ pub use tailer::{Batch, FetchedRecord, TailError, Tailer, join_trace};
 pub use writer::{
     COMMAND_TRANSACTIONAL_ID, Committed, FencedWriter, IndeterminateHandler,
     OBJECT_TRANSACTIONAL_ID, PendingRecord, WEBHOOK_TRANSACTIONAL_ID, WriteError,
+    runner_transactional_id,
 };

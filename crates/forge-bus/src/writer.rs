@@ -54,6 +54,24 @@ pub const OBJECT_TRANSACTIONAL_ID: &str = "forge.objects.main";
 /// consequences of decisions already committed.
 pub const WEBHOOK_TRANSACTIONAL_ID: &str = "forge.webhooks.main";
 
+/// A transactional id for one CI runner process.
+///
+/// Unique per process, which is the opposite of every other id here and is the
+/// point. The others are fixed so that a new instance *fences* the old one —
+/// that is what makes them single writers. Runners are not single writers:
+/// several are meant to run at once, and the queue hands each job to exactly
+/// one of them. Give them a shared id and the second runner to start silently
+/// fences the first, which then fails every event it tries to write for a job
+/// it has already claimed in gres — a job stuck in `running` forever.
+///
+/// Nothing is lost by not fencing. A runner's writes are consequences of
+/// decisions already committed, and what stops two runners executing one job is
+/// the compare-and-swap in `CiStore::claim_job`, not the producer epoch.
+#[must_use]
+pub fn runner_transactional_id() -> String {
+    format!("forge.runner.{}", uuid::Uuid::now_v7())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum WriteError {
     /// Another writer took over. This instance must stop writing; it can no

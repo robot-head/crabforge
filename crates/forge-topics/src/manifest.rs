@@ -60,13 +60,29 @@ impl TopicSpec {
             name: name.into(),
             partitions,
             // Single-node broker for local development. Multi-broker clusters
-            // are driven by crabka's Kubernetes operator, which is where a
-            // higher replication factor becomes available.
+            // are driven by crabka's Kubernetes operator; see
+            // [`TopicSpec::replicated`].
             replicas: 1,
             cleanup,
             segment_bytes,
             compression: Some("zstd"),
         }
+    }
+
+    /// Ask for `replicas` copies of every partition.
+    ///
+    /// Not cosmetic on a multi-broker cluster: with the default of one, losing
+    /// the broker that holds a partition makes it unavailable, and losing its
+    /// disk destroys the only copy of whatever was in it — which for this forge
+    /// is event history and git objects. A three-broker deployment that leaves
+    /// this at one has three brokers and one copy of everything.
+    ///
+    /// Clamped at one, because zero is not a replication factor and the broker
+    /// rejects it with an error that does not say so.
+    #[must_use]
+    pub fn replicated(mut self, replicas: i32) -> Self {
+        self.replicas = replicas.max(1);
+        self
     }
 
     /// Render to the broker's config map, using only whitelisted keys.
@@ -88,6 +104,20 @@ impl TopicSpec {
         c.insert("segment.bytes".into(), self.segment_bytes.as_config_value());
         if let Some(codec) = self.compression {
             c.insert("compression.type".into(), codec.into());
+        }
+        // A replication factor on its own buys availability, not durability: a
+        // write acknowledged by one in-sync replica is still one disk away from
+        // being lost. Requiring a majority makes an acknowledged write survive
+        // the loss of any single broker, which is the property a three-broker
+        // deployment is for.
+        //
+        // A majority rather than all of them, so a rolling restart does not
+        // stop the forge accepting writes.
+        if self.replicas > 1 {
+            c.insert(
+                "min.insync.replicas".into(),
+                (self.replicas / 2 + 1).to_string(),
+            );
         }
         c
     }
