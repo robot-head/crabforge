@@ -234,7 +234,7 @@ services:
 
   # ---- collector + dashboards ------------------------------------------
   alloy:
-    image: mirror.gcr.io/grafana/alloy:v1.18.0
+    image: mirror.gcr.io/grafana/alloy:v1.18.1
     <<: *small
     restart: unless-stopped
     command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "/etc/alloy/config.alloy"]
