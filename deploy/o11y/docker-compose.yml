@@ -253,7 +253,7 @@ services:
       - "${O11Y_OTLP_HTTP_PORT:-4318}:4318"
 
   grafana:
-    image: mirror.gcr.io/grafana/grafana:13.1
+    image: mirror.gcr.io/grafana/grafana:13.2
     <<: *medium
     restart: unless-stopped
     environment:
